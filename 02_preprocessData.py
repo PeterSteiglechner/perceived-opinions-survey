@@ -214,7 +214,7 @@ columns = resdf.columns.to_list()
 duplicates = resdf[resdf.duplicated(subset=["id", "wave"], keep=False)]
 print(
     f"removed {np.sum(duplicates['excl_double'].astype(int))} data points from "
-    f"{len(duplicates["id"].unique())} participants. I keep their first complete entry!"
+    f"{len(duplicates['id'].unique())} participants. I keep their first complete entry!"
 )
 resdf_unique = resdf.loc[~resdf.excl_double.astype(bool)]
 
@@ -266,7 +266,7 @@ def find_pair_index(pairs, a, b):
 def get_op(data_id_wave, p):
     return (
         data_id_wave[
-            [f"player.{"own2" if p == "self" else p}__{q}" for q in questions_sc]
+            [f"player.{'own2' if p == 'self' else p}__{q}" for q in questions_sc]
         ]
     ).values / MAX_OPINIONSLIDER
 
