@@ -21,7 +21,7 @@ sns.set_context("paper")
 df_p_full = pd.read_csv("processed_data/2026-05-13_data_processed_participant.csv")
 print("size of original data: ", len(df_p_full), " including wave 1 and 2: ", df_p_full["wave"].value_counts().to_dict())
 df_p = df_p_full.loc[(~df_p_full.excl_double) & (~df_p_full.excl_NA) & (~df_p_full.excl_time)].copy()
-print(f"Nr of distinct participants: {len(df_p["id"].unique())}")
+print(f"Nr of distinct participants: {len(df_p['id'].unique())}")
 print(f"    after excluding (i) participants with NA opinions ({sum(df_p_full.excl_NA)}) and (ii) participants with less than 1/3 of the median completion time ({sum(df_p_full.excl_time)}) and (iii) double entries (already excluded in preprocessing step)")
 print("size of updated data: ", len(df_p), " including wave 1 and 2: ", df_p["wave"].value_counts().to_dict())
 ids_w1 = df_p.loc[df_p.wave==1, "id"].unique()
@@ -60,7 +60,7 @@ ax.text(0.95,0.95,
 ax.set_xlabel("time in min")
 fig.tight_layout()
 
-print(f"median ({t}): {df_p[t].div(60).median():.2f} (25%-perc: {df_p[t].div(60).describe()["25%"]:.2f}, 75%-perc: {df_p[t].div(60).describe()["75%"]:.2f})")
+print(f"median ({t}): {df_p[t].div(60).median():.2f} (25%-perc: {df_p[t].div(60).describe()['25%']:.2f}, 75%-perc: {df_p[t].div(60).describe()['75%']:.2f})")
 
 times = ['time_trainingGame', 'time_training', 'time_spam', 'time_spam18dots', 'time_pairwise', 'time_pairwise18pairs']
 fig, axs = plt.subplots(2,3, sharex=False)
@@ -174,8 +174,6 @@ plt.ylabel("issue importance")
 # %%
 df_p[[f"w_{q}" for  q in questions_sc]].describe()
 
-# %%
-aa.columns[1]
 
 # %%
 var = "sum_issue_importance"
@@ -405,7 +403,7 @@ fig.tight_layout()
 # ### Treatment
 
 # %%
-print(f"Treatment: {df_p["treatment_wave2"].value_counts().to_dict()}")
+print(f"Treatment: {df_p['treatment_wave2'].value_counts().to_dict()}")
 
 # %%
 fig, ax = plt.subplots(1,1, figsize=(16/2.54,14/2.54))
