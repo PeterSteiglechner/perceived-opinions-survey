@@ -194,10 +194,10 @@ Pairs placed farther apart on the map receive lower similarity ratings than pair
 #| label: H3
 #| 
 df_h3 <- df_diff %>%
-  select(id, wave, similarity, pixel_dist) %>%
+  select(id, wave, pairwise_similarity, pixel_dist) %>%
   drop_na()
 
-model <- lmer(similarity ~ pixel_dist + (1 | id), data = df_h3, REML = TRUE)
+model <- lmer(pairwise_similarity ~ pixel_dist + (1 | id), data = df_h3, REML = TRUE)
 
 beta1     <- fixef(model)["pixel_dist"]
 group_var <- as.data.frame(VarCorr(model))$vcov[1]
@@ -235,13 +235,13 @@ The closest pair on the map receives a higher similarity rating than the farthes
 #| label: H4
 df_h4 <- df_diff %>%
   filter(minDistance_pair_dummy == "True" | maxDistance_pair_dummy == "True") %>%
-  select(id, wave, minDistance_pair_dummy, maxDistance_pair_dummy, similarity)
+  select(id, wave, minDistance_pair_dummy, maxDistance_pair_dummy, pairwise_similarity)
 
 df_h4_wide <- df_h4 %>%
   pivot_wider(
     id_cols     = c(id, wave),
     names_from  = maxDistance_pair_dummy,
-    values_from = similarity
+    values_from = pairwise_similarity
   ) %>%
   rename(sim_min = "False", sim_max = "True") %>%
   mutate(diff = sim_min - sim_max)

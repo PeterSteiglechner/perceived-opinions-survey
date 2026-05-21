@@ -444,7 +444,7 @@ sns.pairplot(df_diff.sample(500)[diff_cols], plot_kws={'size':0.1}, )
 
 # %%
 fig, axs = plt.subplots(2,2, figsize=(16/2.54, 10/2.54))
-sns.histplot(df_diff, x="similarity", hue="wave", palette="Set1", hue_order=[2,1], ax=axs[0,0])
+sns.histplot(df_diff, x="pairwise_similarity", hue="wave", palette="Set1", hue_order=[2,1], ax=axs[0,0])
 
 sns.histplot(df_diff, x="pixel_dist", hue="wave", palette="Set1", hue_order=[2,1], ax=axs[0,1])
 

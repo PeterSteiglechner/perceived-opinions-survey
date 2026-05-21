@@ -327,9 +327,9 @@ for w in [1, 2]:
             match = find_pair_index(pairs, a, b)
 
             if match is None:
-                row["similarity"] = np.nan
+                row["pairwise_similarity"] = np.nan
             else:
-                row["similarity"] = (
+                row["pairwise_similarity"] = (
                     data_id_wave[f"player.similarityPair{match + 1}"]
                     / MAX_DEFAULTSLIDER
                 )

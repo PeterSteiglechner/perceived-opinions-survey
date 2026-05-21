@@ -211,7 +211,7 @@ For each issue `q` in `questions_sc`:
 
 | Column | Range | Description |
 |---|---|---|
-| `similarity` | [0, 1] | Explicit similarity rating for this pair (NaN if pair was not shown in pairwise task) |
+| `pairwise_similarity` | [0, 1] | Explicit similarity rating for this pair (NaN if pair was not shown in pairwise task) |
 
 #### Affective Measures
 
