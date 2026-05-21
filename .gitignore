@@ -1,0 +1,8 @@
+processed_data
+archive
+wave1
+wave2
+.venv*
+0_*_files
+__pychache__
+.R*
