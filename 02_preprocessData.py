@@ -16,17 +16,26 @@ df = pd.read_csv("processed_data/2026-05-13_allBilendiData.csv")
 
 resdf = df[
     ["bilendi_id", "wave"]
-    + ["excl_double", "excl_NA", "excl_training", "excl_time", "excl_wave1Only"]
+    + ["excl_double", "excl_NA", "excl_training", "excl_time", "excl_noMetaData", "excl_wave1Only"]
 ].copy().rename(columns={"bilendi_id":"id"})
+assert(resdf[["excl_double", "excl_NA", "excl_time"]].sum().sum()==0)
 
-resdf["t_completed"] = pd.to_datetime(df["player.t_on_success"], unit="s")
-df["player.t_firstDotMoved"] = df["player.t_firstDotMoved"].replace({-1: np.nan})
-df["player.t_after_first_pair"] = df["player.t_after_first_pair"].replace({-1: np.nan})
+duplicates = resdf[resdf.duplicated(subset=["id", "wave"], keep=False)]
+assert(len(duplicates)==0)
+# print(
+#     f"removed {np.sum(duplicates['excl_double'].astype(int))} data points from "
+#     f"{len(duplicates['id'].unique())} participants. I keep their first complete entry!"
+# )
+# resdf_unique = resdf.loc[~resdf.excl_double.astype(bool)]
 
 
 # ----------------------------------------------
 # -------    TIME
 # ----------------------------------------------
+
+resdf["t_completed"] = pd.to_datetime(df["player.t_on_success"], unit="s")
+df["player.t_firstDotMoved"] = df["player.t_firstDotMoved"].replace({-1: np.nan})
+df["player.t_after_first_pair"] = df["player.t_after_first_pair"].replace({-1: np.nan})
 
 tcols = {
     "time_total": ("t_on_ownOpinion", "t_on_success"),
@@ -138,15 +147,8 @@ for v1, v2 in combinations(practice_training_dots, 2):
     )
 
 resdf["attemptsPractice"] = df["player.attemptPractice"].astype(int)
-resdf["passed_practice_sanity"] = np.where(
-    ~df["player.isTrainingPassed"].astype(bool),  # never saw the check
-    np.nan,
-    np.where(
-        df["player.practice_sanity_check_correct"],  # passed it
-        True,
-        False,  # saw it but didn't pass
-    ),
-).astype(bool)
+resdf["passed_practice_sanity"] = np.nan
+resdf.loc[df["player.isTrainingPassed"].astype(bool), "passed_practice_sanity"] = df.loc[df["player.isTrainingPassed"].astype(bool), "player.practice_sanity_check_correct"]
 
 resdf.loc[resdf.excl_training, "attemptsPractice"] = -999
 resdf["attemptsPractice"] = pd.Categorical(
@@ -211,12 +213,7 @@ for p in partiesVars:
 
 # %%
 columns = resdf.columns.to_list()
-duplicates = resdf[resdf.duplicated(subset=["id", "wave"], keep=False)]
-print(
-    f"removed {np.sum(duplicates['excl_double'].astype(int))} data points from "
-    f"{len(duplicates['id'].unique())} participants. I keep their first complete entry!"
-)
-resdf_unique = resdf.loc[~resdf.excl_double.astype(bool)]
+
 
 demo_cols = ["gender", "age", "party_vote", "region"]  # participant-level constants
 excl_cols = ["excl_double", "excl_NA", "excl_training", "excl_time", "excl_wave1Only"]
@@ -225,13 +222,13 @@ value_cols = [
     c for c in resdf.columns if c not in ["id", "wave"] + demo_cols + excl_cols
 ]
 
-df_wide = resdf_unique.pivot(index="id", columns="wave", values=value_cols)
+df_wide = resdf.pivot(index="id", columns="wave", values=value_cols)
 df_wide.columns = [f"wave{wave}_{var}" for var, wave in df_wide.columns]
 df_wide = df_wide.reset_index()
 
 # Join both demographics and exclusion flags — all are participant-level constants
 static_cols = demo_cols + excl_cols
-static_once = resdf_unique.drop_duplicates("id").set_index("id")[
+static_once = resdf.drop_duplicates("id").set_index("id")[
     static_cols
 ]
 df_wide = df_wide.join(static_once, on="id")
@@ -241,7 +238,7 @@ if not os.path.isdir("processed_data/"):
 df_wide.to_csv(
     "processed_data/2026-05-13_data_processed_participant_pivot.csv", index=False
 )
-resdf_unique.to_csv(
+resdf.to_csv(
     "processed_data/2026-05-13_data_processed_participant.csv", index=False
 )
 
@@ -273,7 +270,7 @@ def get_op(data_id_wave, p):
 
 dx = []
 for w in [1, 2]:
-    dfw = resdf_unique.loc[resdf_unique.wave == w]
+    dfw = resdf.loc[resdf.wave == w]
     assert len(dfw["id"]) == len(dfw["id"].unique())
     for counter, (i, x) in enumerate(list(dfw.iterrows())):
         id = x["id"]
@@ -354,13 +351,17 @@ for w in [1, 2]:
 print(".done")
 # %%
 dxdf = pd.DataFrame(dx)
+dxdf["treatment_wave2"] = False
+dxdf.loc[(dxdf.wave==2) & (dxdf["id"].isin(resdf.loc[resdf.treatment_wave2==1, "id"].tolist())), "treatment_wave2"] = True 
+
+dxdf_vlaidrows = dxdf.dropna(subset=["pixel_dist"])
 if not os.path.isdir("processed_data/"):
     os.mkdir("processed_data/")
-dxdf.to_csv("processed_data/2026-05-13_data_processed_differences.csv", index=False)
+dxdf_vlaidrows.to_csv("processed_data/2026-05-13_data_processed_differences.csv", index=False)
 
 # %%
 
-print(resdf_unique.columns)
+print(resdf.columns)
 print(dxdf.columns)
 
 # %%

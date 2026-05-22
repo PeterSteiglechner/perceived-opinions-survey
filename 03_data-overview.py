@@ -18,28 +18,30 @@ sns.set_context("paper")
 # ### Exlcusion Criteria
 
 # %%
-df_p_full = pd.read_csv("processed_data/2026-05-13_data_processed_participant.csv")
-print("size of original data: ", len(df_p_full), " including wave 1 and 2: ", df_p_full["wave"].value_counts().to_dict())
-df_p = df_p_full.loc[(~df_p_full.excl_double) & (~df_p_full.excl_NA) & (~df_p_full.excl_time)].copy()
-print(f"Nr of distinct participants: {len(df_p['id'].unique())}")
-print(f"    after excluding (i) participants with NA opinions ({sum(df_p_full.excl_NA)}) and (ii) participants with less than 1/3 of the median completion time ({sum(df_p_full.excl_time)}) and (iii) double entries (already excluded in preprocessing step)")
-print("size of updated data: ", len(df_p), " including wave 1 and 2: ", df_p["wave"].value_counts().to_dict())
-ids_w1 = df_p.loc[df_p.wave==1, "id"].unique()
-ids_w2 = df_p.loc[df_p.wave==2, "id"].unique()
+df_p = pd.read_csv("processed_data/2026-05-13_data_processed_participant.csv")
+print("Full Size of participant data: ", df_p.wave.value_counts().to_dict())
+
+#print("size of original data: ", len(df_p_full), " including wave 1 and 2: ", df_p_full["wave"].value_counts().to_dict())
+#df_p = df_p_full.loc[(~df_p_full.excl_double) & (~df_p_full.excl_NA) & (~df_p_full.excl_time)].copy()
+#print(f"Nr of distinct participants: {len(df_p['id'].unique())}")
+#print(f"    after excluding (i) participants with NA opinions ({sum(df_p_full.excl_NA)}) and (ii) participants with less than 1/3 of the median completion time ({sum(df_p_full.excl_time)}) and (iii) double entries (already excluded in preprocessing step)")
+#print("size of updated data: ", len(df_p), " including wave 1 and 2: ", df_p["wave"].value_counts().to_dict())
+# ids_w1 = df_p.loc[df_p.wave==1, "id"].unique()
+# ids_w2 = df_p.loc[df_p.wave==2, "id"].unique()
 inds_bothwaves = df_p["id"].value_counts().reset_index().query("count==2")["id"].tolist()
-print("Nr of participants who completed both waves: ", len(inds_bothwaves))
+# print("Nr of participants who completed both waves: ", len(inds_bothwaves))
 df_p_bothwaves = pd.read_csv("processed_data/2026-05-13_data_processed_participant_pivot.csv").query(f"id in {inds_bothwaves}")
-print(len(df_p_bothwaves))
+print("Full Size of across-wave data: ", len(df_p_bothwaves))
 # print(df_p.shape, df_p.columns[50:60])
 
 # %%
 df_diff = pd.read_csv("processed_data/2026-05-13_data_processed_differences.csv")
-df_diff = df_diff.loc[((df_diff["id"].isin(ids_w1)) & (df_diff["wave"]==1)) | ((df_diff["id"].isin(ids_w2)) & (df_diff["wave"]==2))]
-print("Full Size of pairwise data (in wave 1 and wave 2): ")
-print(df_diff["wave"].value_counts().to_dict())
-print(df_diff.shape, df_diff.columns)
+# df_diff = df_diff.loc[((df_diff["id"].isin(ids_w1)) & (df_diff["wave"]==1)) | ((df_diff["id"].isin(ids_w2)) & (df_diff["wave"]==2))]
+print("Full Size of pairwise data (in wave 1 and wave 2): ", df_diff["wave"].value_counts().to_dict())
+print(df_diff.shape)
+print(len(df_diff.loc[df_diff.wave==1,"id"].unique()))
 print(len(df_diff.loc[df_diff.wave==2,"id"].unique()))
-
+# print(df_diff.columns)
 # %% [markdown]
 # ## Data 
 
@@ -268,8 +270,6 @@ for var in ["attemptsPractice"]:
     print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].replace({-999:np.nan}).corr().values[1,0]}")
 
 
-display(df_p.groupby("wave")["attemptsPractice"].replace({-999:np.nan}).describe())
-
 # %%
 display(df_p[[f"dist_game_{a[0]}-{b[0]}" for a,b in combinations(practice_game_dots, 2)]].describe())
 fig = plt.figure(figsize=(2,2))
@@ -287,7 +287,7 @@ fig.autofmt_xdate()
 
 
 # %%
-df_p.groupby("wave")["passed_practice_sanity"].value_counts().reset_index()
+df_p[["wave", "passed_practice_sanity"]].replace({np.nan:"failed training"}).groupby("wave")["passed_practice_sanity"].value_counts().reset_index()
 
 # %% [markdown]
 # ## Mapping
@@ -314,6 +314,20 @@ for var in vars:
     fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
     sns.histplot(df_p, x=var, hue="wave", ax=axs[0], alpha=0.6)
     sns.regplot(df_p_bothwaves, x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
+    axs[1].set_aspect("equal")
+    print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
+    fig.tight_layout()
+
+display(df_p[vars].describe())
+
+
+#%%
+vars = ["average_pixel_dist", "average_pixel_dist_parties"]
+for var in vars:
+    fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
+    sns.histplot(df_p.loc[df_p["wave"]==2], x=var, hue="treatment_wave2", ax=axs[0], alpha=0.6)
+    for t in [0,1]: 
+        sns.regplot(df_p_bothwaves.loc[df_p_bothwaves.wave2_treatment_wave2==t], x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
     axs[1].set_aspect("equal")
     print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
     fig.tight_layout()
@@ -489,9 +503,13 @@ ax.set_ylabel("Sympathy")
 ax.legend()
 
 # %%
+
+plt.figure()
 sns.histplot(df_diff, x="sympathy", hue="ingroupdummy", palette="Set2",)
 
 # %%
+
+plt.figure()
 print(f"Correlation between social Closeness and pixel distance: {df_diff[['socialCloseness']+['pixel_dist']].corr().iloc[0,1]}")
 df_diff["lr_cat"] =pd.cut(df_diff.lr, np.linspace(0, 1, 4), right=False, labels=["left", "moderate", "right"])
 sns.lmplot(df_diff, x="pixel_dist", y="socialCloseness", hue="lr_cat", scatter_kws={"s":1, "alpha":0.3 }, y_jitter=0.01)
@@ -499,26 +517,16 @@ plt.ylim(-0.05,1.05)
 
 # %%
 
-df_p["std_socialCircle_ops_east_germans"]
-
-# %%
-sns.histplot(df_diff, x="treatment_wave2", y="y")
-
-# %%
-df_p["treatment_wave2"]#.join(df_diff["treatment_wave2"]
-
-
-# %%
-
-
 # %%
 df_diff["treatment"] = False
 df_diff.loc[df_diff["id"].isin(df_p.loc[df_p.treatment_wave2==1, "id"].tolist()), "treatment"] = True 
 
+plt.figure()
 sns.violinplot(df_diff.loc[df_diff.wave==2], x="treatment", y="sympathy")
 sns.stripplot(df_diff.loc[df_diff.wave==2], x="treatment", y="sympathy",size=1)
 
 # %%
+plt.figure()
 q = questions_sc[0]
 sns.violinplot(df_diff.loc[(df_diff.wave==2) & (df_diff.dot2.isin(partiesVars)) & (df_diff.dot1=="self") ], x="treatment", y=f"deltaX_{q}")
 sns.stripplot(df_diff.loc[(df_diff.wave==2) & (df_diff.dot2.isin(partiesVars)) & (df_diff.dot1=="self")], x="treatment", y=f"deltaX_{q}",size=1,)

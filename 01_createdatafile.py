@@ -85,9 +85,10 @@ for wave in [1, 2]:
 
 ownops = pd.isna(
     df[[pre + f"own2__{q}" for q in questions_sc]].replace({-999.0: np.nan})
-).all(axis=1)
+).any(axis=1)
 df["excl_NA"] = ownops
 
+df["excl_noMetaData"] = df.apply(lambda x: str(x["bilendi_id"]) not in meta.ID.values.astype("str"), axis=1)
 df["excl_training"] = (df[pre + "attemptPractice"] >= 5) & ~df[
     pre + "isTrainingPassed"
 ].astype(bool)
@@ -109,19 +110,30 @@ print(
     "Exclusion counts:",
 )
 display(
-    df[["excl_double", "excl_time", "excl_NA", "wave"]]
+    df[["excl_double", "excl_time", "excl_NA",  "wave"]]
     .value_counts()
     .reset_index()
     .sort_values("wave")
 )
 display(df[["excluded", "wave"]].value_counts().reset_index().sort_values("wave"))
 
-print(
-    "valid in wave1 but not in wave 2: ",
-    df[["wave", "excl_wave1Only"]].value_counts().to_dict(),
-)
+
 if not os.path.isdir("processed_data/"):
     os.mkdir("processed_data/")
+
+df = df.loc[~df.excluded]
+
+ids_wave1 = df.loc[df.wave==1].bilendi_id.values
+ids_wave2 = df.loc[df.wave==2].bilendi_id.values
+print(" valid in wave 2 but not in wave 1: ", 
+df.loc[df.wave==2].apply(lambda x: (x["bilendi_id"] in ids_wave2) and (x["bilendi_id"] not in ids_wave1), axis=1).sum()
+)
+print(" valid in wave 1 but not in wave 2: ", 
+df.loc[df.wave==1].apply(lambda x: (x["bilendi_id"] in ids_wave1) and (x["bilendi_id"] not in ids_wave2), axis=1).sum())
+print(" valid in wave 1 and in wave 2: ", 
+df.loc[df.wave==2].apply(lambda x: (x["bilendi_id"] in ids_wave1) and (x["bilendi_id"]  in ids_wave2), axis=1).sum())
+
+print(f"Final Size of Datasets: {df['wave'].value_counts().to_dict()}")
 df.to_csv("processed_data/2026-05-13_allBilendiData.csv", index=False)
 
 # %%

@@ -55,41 +55,19 @@ partiesVars = c("LeftParty", "BSW", "GreenParty", "SPD", "FDP", "CDU/CSU", "AfD"
 
 # Load Data
 ```{r}
-df_participants_full <- read.csv("processed_data/2026-05-13_data_processed_participant.csv")
-
-df_partic <- df_participants_full %>%
-  filter(excl_double == "False", excl_NA == "False", excl_time == "False")
-
-ids_w1 <- df_partic %>% filter(wave == 1) %>% pull(id) %>% unique()
-ids_w2 <- df_partic %>% filter(wave == 2) %>% pull(id) %>% unique()
+df_partic <- read.csv("processed_data/2026-05-13_data_processed_participant.csv")
 
 inds_bothwaves <- df_partic %>%
   count(id) %>%
   filter(n == 2) %>%
   pull(id)
 
-# df_part_bothwaves <- read.csv(
-#   "processed_data/2026-05-13_data_processed_participant_pivot.csv"
-# ) %>%
-#   filter(id %in% inds_bothwaves)
-
-# all_of(paste0("std_socialCircle_ops_", questions_sc))
-# # Overall social circle std
-# df_p <- df_p %>%
-#   mutate(overall_std_socialCircle = rowMeans(
-#     across(all_of(paste0("std_socialCircle_ops_", questions_sc))),
-#     na.rm = TRUE
-#   ))
-
-
-df_diff <- read.csv("processed_data/2026-05-13_data_processed_differences.csv") %>%
-  filter(
-    (id %in% ids_w1 & wave == 1) |
-    (id %in% ids_w2 & wave == 2)
-  )
-# %>% mutate(ingroupdummy = as.integer(ingroupdummy  == "True"))
+df_diff <- read.csv("processed_data/2026-05-13_data_processed_differences.csv")
 
 # View(df_diff)
+df_partic |> nrow()
+df_partic$id |> unique() |> length()
+df_diff$id |> unique() |> length()
 ```
 
 # Analysis Theory
@@ -174,7 +152,7 @@ make_loss <- function(deltas, pixel_dist, kernel = c("linear", "exponential")) {
   function(params) {
     # params layout:
     #   linear:      alpha[1:6], a, b        (8 params)
-    #   exponential: alpha[1:6], b, c        (8 params)
+    #   exponential: alpha[1:6], a, b        (8 params)
     alpha  <- params[1:n_issues]
     g      <- weighted_l1(deltas, alpha)
     
@@ -203,22 +181,7 @@ fit_participant <- function(df_p, kernel = c("linear", "exponential")) {
   
   kernel <- match.arg(kernel)
 
-  # remove missing values
-  df_p <- df_p %>%
-    filter(
-      !is.na(pixel_dist),
-      if_all(all_of(delta_cols), ~ !is.na(.))
-    )
-
-  # skip unusable participants
-  if (
-    nrow(df_p) < 3 ||
-    is.na(var(df_p$pixel_dist)) ||
-    var(df_p$pixel_dist) == 0
-  ) {
-    return(NULL)
-  }
-
+  # missing values all already removed
   deltas     <- as.matrix(df_p[, delta_cols])
   pixel_dist <- df_p$pixel_dist
 
@@ -272,13 +235,13 @@ fit_participant <- function(df_p, kernel = c("linear", "exponential")) {
   if (kernel == "linear") {
     result$param1 <- params[n_issues + 1]   # a (min distance)
     result$param2 <- params[n_issues + 2]   # b (rate)
-    result$param1_name <- "a_min_dist"
-    result$param2_name <- "b_rate"
+    result$param1_name <- "linearKernel_param1"
+    result$param2_name <- "linearKernel_param2"
   } else {
     result$param1 <- params[n_issues + 1]   # b (reach)
     result$param2 <- params[n_issues + 2]   # c (sharpness)
-    result$param1_name <- "b_reach"
-    result$param2_name <- "c_sharpness"
+    result$param1_name <- "expKernel_param1"
+    result$param2_name <- "expKernel_param2"
   }
   
   result
@@ -359,14 +322,6 @@ alphas_join <- alphas_wide %>%
     ),
     names_glue = "{kernel}_{.value}"
   )
-alphas_join <- alphas_join %>%
-  rename(
-    a_min_dist = linear_param1,
-    b_rate = linear_param2,
-    
-    b_reach = exponential_param1,
-    c_sharpness = exponential_param2
-  )
 
 names(alphas_join) <- names(alphas_join) %>%
   str_replace("alpha_deltaX_", "alpha_")
@@ -404,8 +359,12 @@ write.csv(df_partic_with_alphas, "processed_data/2026-05-19_data_processed_parti
 
 write.csv(df_diff_with_alphas, "processed_data/2026-05-19_data_processed_differences_withIssueWeights.csv", row.names=FALSE)
 ```
-# Visualisation
 
+
+
+
+# Visualisation
+THis is just some quick analysis of the inferred weights
 ## vis average 
 
 ```{r}
@@ -479,10 +438,10 @@ predict_distances <- function(df_p, fit_row) {
   )
 }
 
-participant = df_diff |> slice(1) |> pull(id)
-w = 1
+participant = "330717073703941" # df_diff |> slice(1) |> pull(id)
+w = 2
 print(as.character(participant))
-k = "exponential"
+k = "linear"
 
 one_fit <- alphas_wide %>%
   filter(kernel == k, id == participant, wave == w) 
