@@ -885,7 +885,7 @@ The prediction is $\beta_q<0$. Issues are assigned higher weight when associated
 ```{r}
 #| label: H9-combined
 variance_type = "std"
-k = "corr"
+k = "corrP"
 df_h9 <- df_p %>%
   filter(wave %in% c(1,2)) %>%
   pivot_longer(
@@ -893,8 +893,8 @@ df_h9 <- df_p %>%
     names_to = c(".value", "issue"),
     names_pattern = all_of(paste0("^(",variance_type,"_socialCircle_ops|",k,"_alpha)_(.*)"))
   ) %>%
-  rename(var_sc =all_of(paste0(variance_type,"_socialCircle_ops")),
-         alpha  = all_of(paste0(k,"_alpha"))) %>%
+  rename(var_sc = paste0(variance_type,"_socialCircle_ops"),
+         alpha  = paste0(k,"_alpha")) %>%
   filter(!is.na(alpha), !is.na(var_sc))
 
 model_h9 <- lmer(alpha ~ var_sc + wave + (1 | issue) , data = df_h9)
@@ -944,7 +944,7 @@ ggplot(df_h9, aes(x = var_sc, y = alpha)) +
 ```{r}
 #| label: H9-separate
 variance_type = "std"
-k = "corr"
+k = "corrP"
 
 models_h9 <- lapply(setNames(questions_sc, questions_sc), function(q) {
   df_q <- df_p %>%
@@ -1668,6 +1668,7 @@ We model the new issue weights, $\alpha_{n,q}(w2)$, inferred in wave 2, of the p
     \alpha_{n,q}(w2) = \alpha_{n,q}(w1) + \beta_1 \cdot \mathbb{I}(\text{condition}_n=T) \cdot \frac{\mathrm{var}_{n,q}(w2)  - \mathrm{var}_{n,q}(w1)}{\sum_q \mathrm{var}_{n,q}(w2)  - \mathrm{var}_{n,q}(w1)}    + \epsilon_{n,q}
 \end{equation}
 
+
 The prediction is $\beta_1 <0$. Higher relative social circle variance on one issue decreases the weight of that issue for the participant.
 %We test this via a t-test with significance threshold $\alpha = 0.05$.
 
@@ -1682,7 +1683,7 @@ df_h15 <- df_p |>
     names_pattern = paste0("^(",variance_type,"_socialCircle_ops)_(.*)")
   ) |>
   rename(
-var_sc = paste0(variance_type, "_socialCircle_ops"), 
+  var_sc = paste0(variance_type, "_socialCircle_ops")
   ) |>
   pivot_wider(
     id_cols     = c(id, issue),
@@ -1692,7 +1693,6 @@ var_sc = paste0(variance_type, "_socialCircle_ops"),
   ) |>
   rename(var_w1 = w1, var_w2 = w2) |>
   mutate(delta_var = var_w2 - var_w1)
-
 df_h15 <- df_h15 |>
   group_by(id) |>
   mutate(
@@ -1714,7 +1714,7 @@ df_weights <- df_p |>
     id_cols    = c(id, issue),
     names_from = wave,
     names_prefix = "alpha_w",
-    values_from  = all_of(paste0(k, "_alpha"))
+    values_from  = paste0(k, "_alpha")
   )
 
 df_h15 <- df_h15 |>
@@ -1827,7 +1827,7 @@ cat(sprintf("H16 Test (beta1 < 0):\n"),
 
 Similarly, we model how participant $n$ rates the likeability rating of typical voters of party $r$ in wave 2 as 
 \begin{equation}
-    y_{n,r} = \beta_0 + \beta_1 \cdot \mathbb{I}(\text{condition}_n=T) \cdot \sum_q \Delta x_{n,\mathrm{self}-r,q} \cdot (\mathrm{var}_{n,q}(w2)  - \mathrm{var}_{n,q}(w1)  + u_n + \epsilon_{n,r}
+    y_{n,r} = \beta_0 + \beta_1 \cdot \mathbb{I}(\text{condition}_n=T) \cdot \sum_q \Delta x_{n,\mathrm{self}-r,q} \cdot (\mathrm{var}_{n,q}(w2)  - \mathrm{var}_{n,q}(w1))  + u_n + \epsilon_{n,r}
 \end{equation} 
 
 The prediction is $\beta_1 > 0$. When overall social circle variance increases, the likeability rating of typical voters of the political parties increases.
@@ -1837,23 +1837,18 @@ The prediction is $\beta_1 > 0$. When overall social circle variance increases, 
 #| label: H17
 
 df_h17 <- df_diff |>
-  filter(dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
+  filter(dot1 == "self", dot2 %in% partiesVars, wave == 2, id %in% treatment_ids) |>
   select(id, dot2, sympathy, all_of(deltaX_cols)) |>
   left_join(df_h16_var_wide, by = "id") |>        # reuse variance change from H16
   mutate(
-    group = if_else(id %in% treatment_ids, "treatment", "control"),
     weighted_var_change = rowSums(
       across(all_of(deltaX_cols)) *
       across(all_of(paste0("delta_var_", questions_sc))),
       na.rm = TRUE
-    ),
-    treatment_x_wvc = if_else(group == "treatment", weighted_var_change, 0)
+    )
   )
 
 # ── 2. Fit mixed model with participant random effect (u_n) ────────────────
-
-library(lme4)
-
 model_h17 <- lmer(sympathy ~ 1 + treatment_x_wvc + (1 | id), data = df_h17)
 
 summary(model_h17)

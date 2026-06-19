@@ -90,8 +90,8 @@ for q in questions_sc:
 
 def get_opinionStd_social_circle(x, q):
     return np.std(
-        x[[f"player.reference{k}__{q}" for k in range(1, MAX_NCONTACS + 1)]]
-        / MAX_OPINIONSLIDER
+        x[[f"player.reference{k}__{q}" for k in range(1, int(x["player.n_references"]) + 1)]]
+        / MAX_OPINIONSLIDER, 
     )
 
 
@@ -162,7 +162,7 @@ resdf["attemptsPractice"] = pd.Categorical(
 # include average distance
 resdf["average_pixel_dist"] = df.apply(
     lambda x: np.mean(
-        [get_dist(x, a, b, "positions") for a, b in combinations(peeps, 2)]
+        [get_dist(x, a, b, "positions") for a, b in combinations(peeps, 2) if not np.isnan(get_dist(x, a, b, "positions"))]
     ),
     axis=1,
 )
@@ -237,11 +237,19 @@ df_wide = df_wide.join(static_once, on="id")
 if not os.path.isdir("processed_data/"):
     os.mkdir("processed_data/")
 df_wide.to_csv(
-    "processed_data/2026-05-13_data_processed_participant_pivot.csv", index=False
+    "processed_data/2026-06-19_data_processed_participant_pivot.csv", index=False
+)
+df_wide.to_excel(
+    "processed_data/2026-06-19_data_processed_participant_pivot.xlsx", index=False
 )
 resdf.to_csv(
-    "processed_data/2026-05-13_data_processed_participant.csv", index=False
+    "processed_data/2026-06-19_data_processed_participant.csv", index=False
 )
+
+resdf.to_excel(
+    "processed_data/2026-06-19_data_processed_participant.xlsx", index=False
+)
+
 
 # %%
 
@@ -282,17 +290,23 @@ for w in [1, 2]:
         )
         if counter % 100 == 0:
             print(f"{counter}", end="...")
-
+        
+        def get_opinionStd_social_circle(x, q):
+                return np.std(
+                    x[[f"player.reference{k}__{q}" for k in range(1, int(x["player.n_references"]) + 1)]]
+                    / MAX_OPINIONSLIDER, 
+                )
+        std_socialCircle_ops = {"std_socialCircle_ops_": get_opinionStd_social_circle(data_id_wave, q) for q in questions_sc}
+        
         for a, b in combinations(peeps, 2):
             row = {}
             row["id"] = id
             row["wave"] = w
             row["age"] = data_id_wave["S2"]
+            row["gender"] = {"Männlich": "m", "Weiblich": "f", "Divers": "d", np.nan: np.nan}[data_id_wave["S1"]]
             party = data_id_wave["player.feel_closest_party"].replace(" ", "")
             row["party"] = party
-            row["lr"] = (data_id_wave["player.lrscale"] + MAX_DIPOLE_SLIDER) / (
-                2 * MAX_DIPOLE_SLIDER
-            )
+            row["lr"] = (data_id_wave["player.lrscale"]/MAX_DIPOLE_SLIDER + 1) / 2
             row["dot1"] = a
             row["dot2"] = b
             assert b != "self"  #
@@ -300,19 +314,20 @@ for w in [1, 2]:
 
             minpair = json.loads(data_id_wave["player.min_pair"])
             minpair = [minpair[0].replace(" ", ""), minpair[1].replace(" ", "")]
-            row["minDistance_pair_dummy"] = ([a, b] == minpair) or ([b, a] == minpair)
+            row["minPixelDistance_pair_dummy"] = ([a, b] == minpair) or ([b, a] == minpair)
             maxpair = json.loads(data_id_wave["player.max_pair"])
             maxpair = [maxpair[0].replace(" ", ""), maxpair[1].replace(" ", "")]
-            row["maxDistance_pair_dummy"] = ([a, b] == maxpair) or ([b, a] == maxpair)
+            row["maxPixelDistance_pair_dummy"] = ([a, b] == maxpair) or ([b, a] == maxpair)
 
-            dots_ops = [get_op(data_id_wave, p) for p in [a, b]]
-            row.update(dict(zip([f"dot1_{q}" for q in questions_sc], dots_ops[0])))
-            row.update(dict(zip([f"dot2_{q}" for q in questions_sc], dots_ops[1])))
+            dot1_ops = get_op(data_id_wave, a)
+            dot2_ops =  get_op(data_id_wave, b)
+            row.update(dict(zip([f"dot1_{q}" for q in questions_sc], dot1_ops)))
+            row.update(dict(zip([f"dot2_{q}" for q in questions_sc], dot2_ops)))
             row.update(
                 dict(
                     zip(
                         [f"deltaX_{q}" for q in questions_sc],
-                        np.abs(dots_ops[1] - dots_ops[0]),
+                        np.abs(dot1_ops - dot2_ops),
                     )
                 )
             )
@@ -333,20 +348,20 @@ for w in [1, 2]:
                 )
 
             if (
-                w == 1 or not a == "self" or not (b in partiesVars)
-            ):  # not measured in wave 1
+                w == 2 and a == "self" and (b in partiesVars)
+            ):
+                row["sympathy"] = (data_id_wave[f"player.{b}_sympathy"]/MAX_DIPOLE_SLIDER + 1)/2
+            else:  # not measured in wave 1
                 row["sympathy"] = np.nan
-            else:
-                row["sympathy"] = (
-                    data_id_wave[f"player.{b}_sympathy"] + MAX_DIPOLE_SLIDER
-                ) / (2 * MAX_DIPOLE_SLIDER)
-
-            if not a == "self" or not "reference" in b:
-                row["socialCloseness"] = np.nan
-            else:
+                
+            if a == "self" and "reference" in b:
                 row["socialCloseness"] = (
                     data_id_wave[f"player.{b}_socialCloseness"] / MAX_DEFAULTSLIDER
                 )
+            else:
+                row["socialCloseness"] = np.nan
+
+            row.update(std_socialCircle_ops)
 
             dx.append(row)
 print(".done")
@@ -358,7 +373,8 @@ dxdf.loc[(dxdf.wave==2) & (dxdf["id"].isin(resdf.loc[resdf.treatment_wave2==1, "
 dxdf_vlaidrows = dxdf.dropna(subset=["pixel_dist"])
 if not os.path.isdir("processed_data/"):
     os.mkdir("processed_data/")
-dxdf_vlaidrows.to_csv("processed_data/2026-05-13_data_processed_differences.csv", index=False)
+dxdf_vlaidrows.to_csv("processed_data/2026-06-19_data_processed_differences.csv", index=False)
+dxdf_vlaidrows.to_excel("processed_data/2026-06-19_data_processed_differences.xlsx", index=False)
 
 # %%
 
