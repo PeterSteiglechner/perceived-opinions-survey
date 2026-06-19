@@ -3,6 +3,10 @@ title: "prereg analysis"
 author: "Peter Steiglechner"
 date: "19.05.2026"
 engine: knitr
+knitr:
+  opts_chunk:
+    comment: ""
+    results: hold
 format:
   html:
     code-fold: true
@@ -28,9 +32,14 @@ pkgs <- c(
   "httpgd",
   "languageserver",
   "lmtest",
-  "sanwich",
-  "caret"
+  "sandwich",
+  "caret",
+  "knitr",
+  "prettycode",
+  "performance",
+  "estimatr"
 )
+knitr::opts_chunk$set(comment = NA)  # removes the ## prefix from output
 invisible(lapply(pkgs, load_or_install))
 options(vsc.viewer = TRUE)
 ```
@@ -62,7 +71,7 @@ partiesCloseSel = c("Left Party", "BSW", "Green Party", "SPD", "FDP", "CDU/CSU",
 ```{r}
 #| label: load_data
 
-df_p <- read.csv("processed_data/2026-05-19_data_processed_participant_withIssueWeights.csv")
+df_p <- read.csv("processed_data/2026-05-19_data_processed_participant_withAllIssueWeights.csv")
 
 inds_bothwaves <- df_p %>%
   count(id) %>%
@@ -73,10 +82,15 @@ inds_bothwaves <- df_p %>%
 df_p <- df_p %>%
   mutate(overall_std_socialCircle = rowMeans(
     across(all_of(paste0("std_socialCircle_ops_", questions_sc))),
+  )) %>%
+  mutate(across(
+    all_of(paste0("std_socialCircle_ops_", questions_sc)),
+    ~ .x^2,
+    .names = "var_{.col}"
   ))
 
 
-df_diff <- read.csv("processed_data/2026-05-19_data_processed_differences_withIssueWeights.csv") %>%
+df_diff <- read.csv("processed_data/2026-05-19_data_processed_differences_withAllIssueWeights.csv") %>%
   mutate(ingroupdummy = as.integer(ingroupdummy  == "True"))
 
 # View(df_diff)
@@ -104,15 +118,14 @@ Participants who prefer a political party place the typical voter of that party 
 ```{r}
 #| label: H1
 df_h1 <- df_diff %>%
+  filter(wave %in% c(1,2)) %>%
   filter(dot1 == "self", dot2 %in% partiesVars) %>%
   select(id, wave, ingroupdummy, party, pixel_dist)
 
-model <- lmer(pixel_dist ~ ingroupdummy + (1 | id), data = df_h1, REML = TRUE)
+model <- lmer(pixel_dist ~ ingroupdummy + (1 | id) + wave, data = df_h1, REML = TRUE)
 intercept   <- fixef(model)["(Intercept)"]
 beta1       <- fixef(model)["ingroupdummy"]
 group_var   <- as.data.frame(VarCorr(model))$vcov[1]
-
-
 
 # t-test on β₁
 coef_summary <- summary(model)$coefficients
@@ -121,18 +134,22 @@ t_stat <- coef_summary["ingroupdummy", "t value"]
 # Satterthwaite degrees of freedom for p-value
 df_satterthwaite <- coef_summary["ingroupdummy", "df"]   
 p_val <- coef_summary["ingroupdummy", "Pr(>|t|)"]
+p_one_sided <- ifelse(beta1 < 0, p_val / 2, 1 - p_val / 2)
+ci <- confint(model, parm = "ingroupdummy", method = "Wald")
 
-
-cat(paste(
+cat("=== H1 Test (one-sided t-test on β₁) ===\n")
+cat(paste0(
   sprintf(
   "d = %.2f + (%.2f) I(r=party_n) + u_n (with Var %.2f) + eps\n",
   intercept, beta1, group_var
-),
-  sprintf("H1 Test (t-test on β₁):\n"), 
-sprintf("  β1 = %.4f\n", beta1), 
-sprintf("  t = %.4f\n",  t_stat), 
-sprintf("  p = %.4f\n",  p_val), 
-sprintf("  Reject H0 (β1 < 0): %s\n", p_val < 0.05 && beta1 < 0)))
+)))
+cat(sprintf("  β1    = %.4f \n",  beta1      ))
+cat(sprintf("  t     = %.4f\n",     t_stat))
+cat(sprintf("  df    = %.2f\n",     df_satterthwaite))
+cat(sprintf("  p     = %.4f (one-sided)\n", p_one_sided))
+cat(sprintf("  95%% CI: [%.4f, %.4f]\n", ci[1], ci[2]))
+cat(sprintf("  Reject H0 (β1 < 0): %s\n",
+            ifelse(p_one_sided < 0.05 & beta1 < 0, "YES ✓", "NO ✗")))
 ```
 
 ### H2
@@ -161,22 +178,20 @@ intercept <- fixef(model)["(Intercept)"]
 beta1     <- fixef(model)["pixel_dist"]
 group_var <- as.data.frame(VarCorr(model))$vcov[1]
 
+coef_summary     <- summary(model)$coefficients
+t_stat           <- coef_summary["pixel_dist", "t value"]
+p_val            <- coef_summary["pixel_dist", "Pr(>|t|)"]
 
-coef_summary <- summary(model)$coefficients
-t_stat <- coef_summary["pixel_dist", "t value"]
-p_val  <- coef_summary["pixel_dist", "Pr(>|t|)"]
+p_one_sided <- ifelse(beta1 < 0, p_val / 2, 1 - p_val / 2)
+ci          <- confint(model, parm = "pixel_dist", method = "Wald")
 
-
-cat(paste(
-  sprintf(
-  "y_r = %.2f + (%.2f) d_self-r + u_n (with Var %.2f) + eps\n",
-  intercept, beta1, group_var
-  ),
-  sprintf("H2 Test (t-test on β₁):\n"),
-  sprintf("  β₁ = %.4f\n", beta1),
-  sprintf("  t = %.4f\n",  t_stat),
-  sprintf("  p = %.4f\n",  p_val),
-  sprintf("  Reject H0 (β₁ < 0): %s\n", p_val < 0.05 && beta1 < 0)))
+cat("=== H2 Test (one-sided t-test on β₁) ===\n")
+cat(sprintf("Model: y_r = %.2f + (%.2f) d_self-r + u_n (Var=%.2f) + eps\n\n", intercept, beta1, group_var))
+cat(sprintf("  β₁    = %.4f\n",              beta1))
+cat(sprintf("  t     = %.4f\n",              t_stat))
+cat(sprintf("  p     = %.4f (one-sided)\n",  p_one_sided))
+cat(sprintf("  95%% CI: [%.4f, %.4f]\n",     ci[1], ci[2]))
+cat(sprintf("  Reject H0 (β₁ < 0): %s\n",   ifelse(p_one_sided < 0.05 & beta1 < 0, "YES ✓", "NO ✗")))
 
 ```
 
@@ -195,29 +210,32 @@ Pairs placed farther apart on the map receive lower similarity ratings than pair
 #| label: H3
 #| 
 df_h3 <- df_diff %>%
+  filter(wave %in% c(1,2)) %>%
   select(id, wave, pairwise_similarity, pixel_dist) %>%
   drop_na()
 
-model <- lmer(pairwise_similarity ~ pixel_dist + (1 | id), data = df_h3, REML = TRUE)
+model <- lmer(pairwise_similarity ~ pixel_dist + (1 | id) + wave , data = df_h3, REML = TRUE)
 
+intercept <- fixef(model)["(Intercept)"]
 beta1     <- fixef(model)["pixel_dist"]
 group_var <- as.data.frame(VarCorr(model))$vcov[1]
 
-
-
 coef_summary <- summary(model)$coefficients
 t_stat <- coef_summary["pixel_dist", "t value"]
-p_val  <- coef_summary["pixel_dist", "Pr(>|t|)"]
+df_satterthwaite <- coef_summary["pixel_dist", "df"]
+p_val            <- coef_summary["pixel_dist", "Pr(>|t|)"]
 
-cat(paste(
-  sprintf("s_ij = %.2f + (%.2f) d_ij + u_n (Var = %.2f) + eps", intercept, beta1, group_var),
-  sprintf("H3 Test (t-test on β1):"),
-  sprintf("  β1 = %.4f", beta1),
-  sprintf("  t  = %.4f", t_stat),
-  sprintf("  p  = %.4f", p_val),
-  sprintf("  Reject H0 (β1 < 0): %s", ifelse(p_val < 0.05 && beta1 < 0, "TRUE", "FALSE")),
-  sep = "\n"
-))
+p_one_sided <- ifelse(beta1 < 0, p_val / 2, 1 - p_val / 2)
+ci          <- confint(model, parm = "pixel_dist", method = "Wald")
+
+cat("=== H3 Test (one-sided t-test on β₁) ===\n")
+cat(paste0(sprintf("Model: s_ij = %.2f + (%.2f) d_ij + u_n (Var = %.2f) + eps\n", intercept, beta1, group_var)))
+cat(sprintf("  β₁    = %.4f\n",              beta1))
+cat(sprintf("  t     = %.4f\n",              t_stat))
+cat(sprintf("  df    = %.2f\n",              df_satterthwaite))
+cat(sprintf("  p     = %.4f (one-sided)\n",  p_one_sided))
+cat(sprintf("  95%% CI: [%.4f, %.4f]\n",     ci[1], ci[2]))
+cat(sprintf("  Reject H0 (β₁ < 0): %s\n",   ifelse(p_one_sided < 0.05 & beta1 < 0, "YES ✓", "NO ✗")))
 
 ```
 
@@ -235,6 +253,7 @@ The closest pair on the map receives a higher similarity rating than the farthes
 ```{r}
 #| label: H4
 df_h4 <- df_diff %>%
+  filter(wave %in% c(1,2)) %>%
   filter(minDistance_pair_dummy == "True" | maxDistance_pair_dummy == "True") %>%
   select(id, wave, minDistance_pair_dummy, maxDistance_pair_dummy, pairwise_similarity)
 
@@ -252,12 +271,12 @@ t_stat       <- t_result$statistic
 p_two_tailed <- t_result$p.value
 p_one_tailed <- p_two_tailed / 2
 
-cat(sprintf("H4 Test (one-sample t-test on ∆smax):\n"), 
-sprintf("  Mean diff (s_minDist - s_maxDist) = %.4f\n", mean(df_h4_wide$diff, na.rm = TRUE)), 
-sprintf("  t = %.4f\n",             t_stat), 
-sprintf("  p (two-tailed) = %.4f\n", p_two_tailed), 
-sprintf("  p (one-tailed) = %.4f\n", p_one_tailed), 
-sprintf("  H4 supported: %s\n",      t_stat > 0 && p_one_tailed < 0.05))
+cat("=== H4 Test  (one-sample t-test on ∆smax): ===\n")
+cat(sprintf("  Mean diff (s_minDist - s_maxDist) = %.4f (+-%.4f) - %.4f (+-%.4f) %.4f\n", mean(df_h4_wide$sim_min), sd(df_h4_wide$sim_min), mean(df_h4_wide$sim_max), sd(df_h4_wide$sim_max), mean(df_h4_wide$diff))) 
+cat(sprintf("  t    = %.4f\n",             t_stat))
+cat(sprintf("  p (two-tailed) = %.4f\n", p_two_tailed))
+cat(sprintf("  p (one-tailed) = %.4f\n", p_one_tailed))
+cat(sprintf("  H4 supported: %s\n",      t_stat > 0 && p_one_tailed < 0.05))
 
 ```
 
@@ -278,7 +297,6 @@ The prediction is that $\overline{\Delta \alpha_q}_{\mathrm{within}} - \overline
 
 ```{r}
 #| label: H5
-
 k <- "exponential"
 alpha_cols <- paste0(k, "_alpha_", questions_sc)
 
@@ -287,8 +305,16 @@ control_ids <- df_p %>%
   pull(id)
 
 df_h5 <- df_p %>%
+  filter(if_all(all_of(alpha_cols), ~ !is.na(.x))) %>%
   filter(id %in% control_ids) %>%
   select(id, wave, all_of(alpha_cols))
+
+# Keep only ids present in BOTH waves
+ids_both <- intersect(
+  df_h5 %>% filter(wave == 1) %>% pull(id),
+  df_h5 %>% filter(wave == 2) %>% pull(id)
+)
+df_h5 <- df_h5 %>% filter(id %in% ids_both)
 
 w1 <- df_h5 %>% filter(wave == 1) %>% arrange(id) %>% select(id, all_of(alpha_cols))
 w2 <- df_h5 %>% filter(wave == 2) %>% arrange(id) %>% select(id, all_of(alpha_cols))
@@ -298,15 +324,14 @@ w2_mat <- w2 %>% select(all_of(alpha_cols)) %>% as.matrix()
 ids    <- w1 %>% pull(id)
 n      <- length(ids)
 
-# Within: each participant's w2 vs their own w1 (row-aligned by construction)
+# Within: each participant's w2 vs their own w1
 within_means <- rowMeans(abs(w2_mat - w1_mat))
 
-# Between: each participant's w2 vs all *other* participants' w1 and w2
+# Between: each participant's w2 vs all other participants' w1
 between_means <- numeric(n)
 for (i in seq_len(n)) {
-  # other_all <- rbind(w1_mat[-i, , drop = FALSE], w2_mat[-i, , drop = FALSE])
   other <- w2_mat[-i, , drop = FALSE]
-  diffs <- rowMeans(abs(sweep(other, 2, w2_mat[i, ])))
+  diffs <- rowMeans(abs(sweep(other, 2, w1_mat[i, ])))
   between_means[i] <- mean(diffs)
 }
 
@@ -315,12 +340,19 @@ t_result <- t.test(delta, mu = 0, alternative = "two.sided")
 t_stat       <- t_result$statistic
 p_two_tailed <- t_result$p.value
 p_one_tailed <- p_two_tailed / 2
-cat(sprintf("H5 Test:\n"), 
-sprintf("  Mean diff (within - between) = %.4f (+- %.4f) - %.4f (+- %.4f) = %.4f\n", mean(within_means), sd(within_means), mean(between_means), sd(between_means), mean(delta)), 
-sprintf("  t = %.4f\n", t_stat), 
-sprintf("  p (two-tailed) = %.4f\n", p_two_tailed), 
-sprintf("  p (one-tailed) = %.4f\n", p_one_tailed), 
-sprintf("  H5 supported: %s\n", t_stat < 0 && p_one_tailed < 0.05))
+cohens_d     <- mean(delta) / sd(delta)
+supported    <- t_stat < 0 && p_one_tailed < 0.05
+
+cat("=== H5 Test ===\n")
+cat(sprintf("  ...using alpha_%s and Manhattan distance\n", k))
+cat(sprintf("  Within  (mean ± sd):  %.4f ± %.4f\n", mean(within_means), sd(within_means)))
+cat(sprintf("  Between (mean ± sd):  %.4f ± %.4f\n", mean(between_means), sd(between_means)))
+cat(sprintf("  Delta   (mean):       %.4f\n\n",       mean(delta)))
+cat(sprintf("  t          = %.4f\n",                  t_stat))
+cat(sprintf("  p (two)    = %.4f\n",                  p_two_tailed))
+cat(sprintf("  p (one)    = %.4f\n",                  p_one_tailed))
+cat(sprintf("  Cohen's d  = %.4f\n\n",                cohens_d))
+cat(sprintf("  H5 supported: %s\n",                   ifelse(supported, "YES ✓", "NO ✗")))
 ```
 
 
@@ -354,15 +386,17 @@ Participants affiliated with different parties differ in how strongly they weigh
 
 #### Interpretation 1: Do parties differ across issues?
 
+For correlations (unconstrained):
 ```{r}
 #| label: H6-combined
-k          <- "exponential"
+k          <- "corrP"   # ONLY FOR CORRELATIONS
 alpha_cols <- paste0(k, "_alpha_", questions_sc)
 
 # --- Data ---
 df_h6 <- df_p %>%
+  filter(wave %in% c(1, 2)) %>%
   select(id, wave, party_close, all_of(alpha_cols)) %>%
-  filter(party_close %in% c(partiesCloseSel, "No party") )%>%
+  filter(party_close %in% c(partiesCloseSel, "No party")) %>%
   pivot_longer(
     cols         = all_of(alpha_cols),
     names_to     = "issue",
@@ -371,107 +405,300 @@ df_h6 <- df_p %>%
   ) %>%
   filter(!is.na(party_close), !is.na(alpha_q)) %>%
   mutate(
-    party_close = relevel(factor(party_close), ref = "AfD"),
-    issue       = relevel(factor(issue),       ref = "rights_indep_integration")
+    party_close = relevel(factor(party_close), ref = "No party"),
+    issue       = relevel(factor(issue),       ref = "climate_concern"),
+    wave        = factor(wave)  # treat as categorical; only 2 levels
   )
 
 # --- Models ---
-model_h6_null <- lm(alpha_q ~ issue,              data = df_h6)
-model_h6_full <- lm(alpha_q ~ party_close * issue, data = df_h6)
+# Random intercept per person (1|id) accounts for repeated measures across waves/issues.
+# Wave is a fixed effect covariate to control for time.
+model_h6_null <- lmer(alpha_q ~ issue + wave + (1 | id),              data = df_h6)
+model_h6_full <- lmer(alpha_q ~ party_close * issue + wave + (1 | id), data = df_h6)
 
-# --- Clustered SEs (corrects for multiple obs per person) ---
-vcov_full <- vcovHC(model_h6_full, type = "HC3")
-vcov_null <- vcovHC(model_h6_null, type = "HC3")
+# --- Model comparison ---
+wt         <- anova(model_h6_null, model_h6_full)
+r2_null    <- r2(model_h6_null)
+r2_full    <- r2(model_h6_full)
+df_null    <- length(fixef(model_h6_null))
+df_full    <- length(fixef(model_h6_full))
 
-coef_h6 <- coeftest(model_h6_full, vcov = vcov_full)
-
-wt   <- waldtest(model_h6_null, model_h6_full, vcov = vcovHC(model_h6_full, type = "HC3"))
-wt_p <- wt$`Pr(>F)`[2]
-
-
-# AIC / BIC (based on log-likelihood, no penalty change from clustered SEs)
 ic_compare <- data.frame(
-  model  = c("Null (issue only)", "Full (party × issue)"),
-  AIC    = c(AIC(model_h6_null),    AIC(model_h6_full)),
-  BIC    = c(BIC(model_h6_null),    BIC(model_h6_full)),
-  logLik = c(as.numeric(logLik(model_h6_null)), as.numeric(logLik(model_h6_full)))
+  Model      = c("Null (issue + wave)", "Full (party × issue + wave)"),
+  AIC        = round(c(AIC(model_h6_null), AIC(model_h6_full)), 1),
+  BIC        = round(c(BIC(model_h6_null), BIC(model_h6_full)), 1),
+  logLik     = round(c(as.numeric(logLik(model_h6_null)), as.numeric(logLik(model_h6_full))), 1),
+  delta_AIC  = round(c(AIC(model_h6_null), AIC(model_h6_full)) - min(c(AIC(model_h6_null), AIC(model_h6_full))), 1),
+  delta_BIC  = round(c(BIC(model_h6_null), BIC(model_h6_full)) - min(c(BIC(model_h6_null), BIC(model_h6_full))), 1),
+  npar       = c(df_null, df_full)
 )
-ic_compare$delta_AIC <- ic_compare$AIC - min(ic_compare$AIC)
-ic_compare$delta_BIC <- ic_compare$BIC - min(ic_compare$BIC)
 
-# R²
-r2_null <- summary(model_h6_null)$r.squared
-r2_full <- summary(model_h6_full)$r.squared
+# --- Output ---
+cat("=== H6: Party preference predicts issue weights ===\n")
+cat("  (wave controlled for as fixed effect; random intercept per id)\n")
 
-# Parameters
-df_null <- length(coef(model_h6_null))
-df_full <- length(coef(model_h6_full))
+cat("Model fit: \n", sep = "")
+print(ic_compare, row.names = FALSE)
 
-# --- Report ---
-cat(sprintf("Model: alpha_nq = issue + party_close × issue + ε  (clustered SEs on id)\n"), 
-sprintf("Note: random intercept dropped — person-level variance was 0\n\n"))
+cat(sprintf(
+  "\nR²  marginal / conditional\n  Null : %.3f / %.3f\n  Full : %.3f / %.3f\n",
+  r2_null$R2_marginal, r2_null$R2_conditional,
+  r2_full$R2_marginal, r2_full$R2_conditional
+))
 
-cat("Fixed effects (clustered SEs):\n")
-print(coef_h6)
+cat("\nLikelihood ratio test (null vs. full):\n", sep = "")
+print(wt)
 
-cat("\nModel comparison:\n")
-print(ic_compare)
+cat("\nFixed effects — full model:\n", sep = "")
+printCoefmat(summary(model_h6_full)$coefficients, digits = 3, signif.stars = TRUE)
 
-cat(sprintf("\nR² null / full = %.4f / %.4f (Δ = %+.4f)\n",
-            r2_null, r2_full, r2_full - r2_null), 
-sprintf("Parameters — null: %d,  full: %d,  added: %d\n",
-            df_null, df_full, df_full - df_null), 
-sprintf("\nH6 robust Wald test p-value: %.4f\n", wt_p), 
-sprintf("Reject H0 (no party × issue interaction): %s\n", wt_p < 0.05))
+cat("\nRandom effects — full model:\n", sep = "")
+print(VarCorr(model_h6_full))
 
+cat("Verdict — H6\n")
+cat(sprintf(
+  "  LRT party × issue interaction: χ²(%d) = %.2f, p = %.3f\n",
+  wt$Df[2], wt$Chisq[2], wt$`Pr(>Chisq)`[2]
+))
+if (wt$`Pr(>Chisq)`[2] < .05) {
+  cat("  → Supported: party affiliation significantly predicts issue weights\n")
+} else {
+  cat("  → Not supported: no significant effect of party on issue weights\n")
+}
 ```
 
+For exponential/linear weights, the weights are constrained. So there can not be any random effects on the intercept! 
+```{r}
+k          <- "exponential"
+alpha_cols <- paste0(k, "_alpha_", questions_sc)
+
+# --- Data (identical) ---
+df_h6 <- df_p %>%
+  filter(wave %in% c(1, 2)) %>%
+  select(id, wave, party_close, all_of(alpha_cols)) %>%
+  filter(party_close %in% c(partiesCloseSel, "No party")) %>%
+  pivot_longer(
+    cols         = all_of(alpha_cols),
+    names_to     = "issue",
+    names_prefix = paste0(k, "_alpha_"),
+    values_to    = "alpha_q"
+  ) %>%
+  filter(!is.na(party_close), !is.na(alpha_q)) %>%
+  mutate(
+    party_close = relevel(factor(party_close), ref = "No party"),
+    issue       = relevel(factor(issue),       ref = "climate_concern"),
+    wave        = factor(wave)
+  )
+
+# --- Models ---
+# No random intercept: sum-to-1 constraint within person-wave means
+# the person-level mean is fixed at 1/k_issues, leaving no between-person
+# variance for a random intercept to capture.
+# Clustered SEs on id account for within-person correlation across issues/waves.
+library(estimatr)
+model_h6_null <- lm_robust(alpha_q ~ issue + wave,
+                            data = df_h6, clusters = id, se_type = "CR2")
+model_h6_full <- lm_robust(alpha_q ~ party_close * issue + wave,
+                            data = df_h6, clusters = id, se_type = "CR2")
+
+# --- Model comparison via AIC/BIC on plain lm (lm_robust doesn't expose logLik) ---
+model_h6_null_lm <- lm(alpha_q ~ issue + wave,                    data = df_h6)
+model_h6_full_lm <- lm(alpha_q ~ party_close * issue + wave,      data = df_h6)
+wt <- anova(model_h6_null_lm, model_h6_full_lm)
+
+ic_compare <- data.frame(
+  Model     = c("Null (issue + wave)", "Full (party × issue + wave)"),
+  AIC       = round(c(AIC(model_h6_null_lm), AIC(model_h6_full_lm)), 1),
+  BIC       = round(c(BIC(model_h6_null_lm), BIC(model_h6_full_lm)), 1),
+  logLik    = round(c(as.numeric(logLik(model_h6_null_lm)), as.numeric(logLik(model_h6_full_lm))), 1),
+  delta_AIC = round(c(AIC(model_h6_null_lm), AIC(model_h6_full_lm)) - min(c(AIC(model_h6_null_lm), AIC(model_h6_full_lm)))),
+  delta_BIC = round(c(BIC(model_h6_null_lm), BIC(model_h6_full_lm)) - min(c(BIC(model_h6_null_lm), BIC(model_h6_full_lm)))),
+  npar      = c(length(coef(model_h6_null_lm)), length(coef(model_h6_full_lm)))
+)
+
+# R² from plain lm
+r2_null <- summary(model_h6_null_lm)$r.squared
+r2_full <- summary(model_h6_full_lm)$r.squared
+
+# --- Output ---
+cat("=== H6: Party preference predicts issue weights (exponential) ===\n")
+cat("  (sum-to-1 constraint → lm with clustered SEs on id; wave as fixed effect)\n")
+cat("Model fit:\n")
+print(ic_compare, row.names = FALSE)
+cat(sprintf(
+  "\nR²\n  Null : %.3f\n  Full : %.3f\n",
+  r2_null, r2_full
+))
+cat("\nLikelihood ratio test (null vs. full):\n")
+print(wt)
+cat("\nFixed effects — full model:\n")
+printCoefmat(summary(model_h6_full)$coefficients[, c("Estimate","Std. Error","t value","Pr(>|t|)")],
+             digits = 3, signif.stars = TRUE)
+cat("\nVerdict — H6 (exponential)\n")
+p_val <- wt$`Pr(>F)`[2]
+cat(sprintf(
+  "  F-test party × issue interaction: F(%d, %d) = %.2f, p = %.3f\n",
+  wt$Df[2], wt$Res.Df[2], wt$F[2], p_val
+))
+if (p_val < .05) {
+  cat("  → Supported: party affiliation significantly predicts issue weights\n")
+} else {
+  cat("  → Not supported: no significant effect of party on issue weights\n")
+}
+```
 
 #### Interpretation 2: For each issue, does party matter?
 ```{r}
 #| label: H6-separate
 #| 
-k          <- "exponential"
+k         <- "corrP"
 alpha_cols <- paste0(k, "_alpha_", questions_sc)
 
-for (q in questions_sc) {
-  
+cat("  H6 | Interpretation 2: Party effects per issue (Waves 1–2)\n")
+cat("  LMM with HC3 robust SEs; reference = 'No party'\n")
+cat("  Fixed: party + wave | Random: intercept per id\n")
+
+results_list <- vector("list", length(questions_sc))
+
+for (i in seq_along(questions_sc)) {
+  q <- questions_sc[i]
+
   df_q <- df_p %>%
-    select(id, party_close, alpha_q = paste0(k, "_alpha_", q)) %>%
+    filter(wave %in% c(1, 2)) %>%
+    select(id, wave, party_close, alpha_q = all_of(paste0(k, "_alpha_", q))) %>%
     filter(party_close %in% c(partiesCloseSel, "No party")) %>%
-    mutate(party_close = factor(party_close),
-           party_close = relevel(party_close, ref = "No party"))
-  
-  m <- lm(alpha_q ~ party_close, data = df_q)
-  
-  # Robust SEs
-  coef_robust <- coeftest(m, vcov = vcovHC(m, type = "HC3"))
-  
-  # Omnibus test — does party matter at all?
-  f   <- summary(m)$fstatistic
-  p_r <- pf(f[1], f[2], f[3], lower.tail = FALSE)
-  
-  cat(sprintf("\n--- Issue: %s ---\n", q))
-  print(coef_robust)
-  cat(sprintf("Omnibus p = %.4f | Reject H0: %s\n", p_r, p_r < 0.05))
+    mutate(
+      party_close = relevel(factor(party_close), ref = "No party"),
+      wave        = factor(wave)
+    ) %>%
+    filter(!is.na(alpha_q))
+
+  m        <- lmer(alpha_q ~ party_close + wave + (1 | id), data = df_q)
+  r2_vals  <- r2(m)
+  n_val    <- nobs(m)
+  n_id     <- length(unique(df_q$id))
+
+  # Omnibus test for party via LRT (null without party_close)
+  m_null   <- lmer(alpha_q ~ wave + (1 | id), data = df_q)
+  wt_q     <- anova(m_null, m)
+  p_omni   <- wt_q$`Pr(>Chisq)`[2]
+  chi_omni <- wt_q$Chisq[2]
+  df_omni  <- wt_q$Df[2]
+
+  sig_omni <- case_when(
+    p_omni < 0.001 ~ "***",
+    p_omni < 0.01  ~ "**",
+    p_omni < 0.05  ~ "*",
+    p_omni < 0.1   ~ ".",
+    TRUE           ~ "ns"
+  )
+
+  coef_raw <- summary(m)$coefficients
+
+  coef_df <- as.data.frame(coef_raw) %>%
+    setNames(c("Estimate", "SE", "df", "t", "Pr(>|t|)")) %>%   # lmer gives no p-column by default;
+                                              # lmerTest adds it — adjust if needed
+    mutate(
+      Party    = gsub("party_close", "", rownames(coef_raw)),
+      p        = 2 * pt(-abs(t), df = n_id - 1),   # Satterthwaite already in lmerTest
+      sig      = case_when(
+        p < 0.001 ~ "***",
+        p < 0.01  ~ "**",
+        p < 0.05  ~ "*",
+        p < 0.1   ~ ".",
+        TRUE      ~ ""
+      ),
+      across(c(Estimate, SE), ~round(., 3)),
+      t = round(t, 2),
+      p = round(p, 3)
+    ) %>%
+    select(Party, Estimate, SE, t, p, sig)
+  rownames(coef_df) <- NULL
+
+  cat(sprintf(
+    "\nIssue : %s\n  N = %d obs / %d persons  |  R² marg/cond = %.3f / %.3f  |  LRT χ²(%d) = %.2f, p = %.4f %s",q, n_val, n_id,
+    r2_vals$R2_marginal, r2_vals$R2_conditional,
+    df_omni, chi_omni, p_omni, sig_omni
+  ))
+  print(kable(coef_df, format = "simple", align = c("l", "r", "r", "r", "r", "l")))
 }
-
 ```
 
+And for exponential/linear weights (constrained):
 ```{r}
-q = "climate_concern"
-df_q <- df_p %>%
-    select(id, party_close, alpha_q = paste0(k, "_alpha_", q)) %>%
+k         <- "linear"
+alpha_cols <- paste0(k, "_alpha_", questions_sc)
+cat("  H6 | Interpretation 2: Party effects per issue (Waves 1–2)\n")
+cat("  Clustered SEs (CR2) on id; reference = 'No party'\n")
+cat("  Fixed: party + wave | No random intercept (sum-to-1 constraint)\n")
+
+results_list <- vector("list", length(questions_sc))
+for (i in seq_along(questions_sc)) {
+  q <- questions_sc[i]
+  df_q <- df_p %>%
+    filter(wave %in% c(1, 2)) %>%
+    select(id, wave, party_close, alpha_q = all_of(paste0(k, "_alpha_", q))) %>%
     filter(party_close %in% c(partiesCloseSel, "No party")) %>%
-    mutate(party_close = factor(party_close),
-           party_close = relevel(party_close, ref = "No party"))
-cat(paste0(k, "_alpha_", q))
-df_q %>%
-  group_by(party_close) %>%
-  summarise(mean_alpha = mean(alpha_q, na.rm = TRUE),
-            sd_alpha   = sd(alpha_q, na.rm = TRUE),
-            n          = n())
+    mutate(
+      party_close = relevel(factor(party_close), ref = "No party"),
+      wave        = factor(wave)
+    ) %>%
+    filter(!is.na(alpha_q))
+
+  # Main model with clustered SEs
+  m      <- lm_robust(alpha_q ~ party_close + wave, data = df_q, clusters = id, se_type = "CR2")
+  # Plain lm for R², AIC, and F-test
+  m_lm      <- lm(alpha_q ~ party_close + wave, data = df_q)
+  m_null_lm <- lm(alpha_q ~ wave,               data = df_q)
+
+  r2_val  <- summary(m_lm)$r.squared
+  n_val   <- nobs(m_lm)
+  n_id    <- length(unique(df_q$id))
+
+  # Omnibus F-test for party via anova on plain lm
+  wt_q     <- anova(m_null_lm, m_lm)
+  p_omni   <- wt_q$`Pr(>F)`[2]
+  f_omni   <- wt_q$F[2]
+  df1_omni <- wt_q$Df[2]
+  df2_omni <- wt_q$Res.Df[2]
+  sig_omni <- case_when(
+    p_omni < 0.001 ~ "***",
+    p_omni < 0.01  ~ "**",
+    p_omni < 0.05  ~ "*",
+    p_omni < 0.1   ~ ".",
+    TRUE           ~ "ns"
+  )
+
+  # Coefficients from lm_robust (has proper clustered SEs)
+  coef_raw <- summary(m)$coefficients
+  coef_df <- as.data.frame(coef_raw) %>%
+    setNames(c("Estimate", "SE", "t", "p", "ci_low", "ci_high", "df")) %>%
+    mutate(
+      Party = gsub("party_close", "", rownames(coef_raw)),
+      sig   = case_when(
+        p < 0.001 ~ "***",
+        p < 0.01  ~ "**",
+        p < 0.05  ~ "*",
+        p < 0.1   ~ ".",
+        TRUE      ~ ""
+      ),
+      across(c(Estimate, SE), ~round(., 3)),
+      t = round(t, 2),
+      p = round(p, 3)
+    ) %>%
+    select(Party, Estimate, SE, t, p, sig)
+  rownames(coef_df) <- NULL
+
+  cat(sprintf(
+    "\n  Issue : %s\n  N = %d obs / %d persons  |  R² = %.3f  |  F(%d, %d) = %.2f, p = %.4f %s",
+    q, n_val, n_id,
+    r2_val,
+    df1_omni, df2_omni, f_omni, p_omni, sig_omni
+  ))
+  print(kable(coef_df, format = "simple", align = c("l", "r", "r", "r", "r", "l")))
+}
 ```
+
 
 ### H7 
 
@@ -494,40 +721,66 @@ Left and right participants differ in how strongly they weigh different politica
 
 ```{r}
 #| label: H7
-k = "exponential"
+k = "corr"
 
 models_h7 <- lapply(setNames(questions_sc, questions_sc), function(q) {
   df_q <- df_p %>%
-    select(id, wave, lr, alpha_q = paste0(k, "_alpha_", q)) %>%
+    filter(wave %in% c(1,2)) %>% 
+    select(id, wave, lr, alpha_q = all_of(paste0(k, "_alpha_", q))) %>%
     filter(!is.na(alpha_q))
   
-  lm(alpha_q ~ lr, data = df_q)
+  lmer(alpha_q ~ lr + (1|id) + wave, data = df_q)
 })
 
 # --- Report ---
-output <- character(length(questions_sc))
-
 for (i in seq_along(questions_sc)) {
   q   <- questions_sc[i]
   m   <- models_h7[[q]]
-  coef_robust <- coeftest(m, vcov = vcovHC(m, type = "HC3"))
-  f   <- summary(m)$fstatistic
-  p   <- pf(f[1], f[2], f[3], lower.tail = FALSE)
-
-  coef_lines <- capture.output(print(coef_robust))
-  
-  output[i] <- paste(
-    sprintf("--- Issue: %s ---", q),
-    paste(coef_lines, collapse = "\n"),
-    sprintf("Omnibus F-test: F(%.0f, %.0f) = %.4f, p = %.4f", f[2], f[3], f[1], p),
-    sprintf("Reject H0 (no LR effect): %s", ifelse(p < 0.05, "TRUE", "FALSE")),
-    sep = "\n"
-  )
+  coef_raw <- summary(m)$coefficients 
+  coef_lines <- capture.output(print(coef_raw))
+  coef_df <- as.data.frame(coef_raw[, 1:5])
+  cat(sprintf("%s  alpha_q = %.3f + %.3f %s  (p = %.4f %s)\n",
+  q,
+  coef_df["(Intercept)", "Estimate"],
+  coef_df["lr", "Estimate"],
+  "lr", coef_df["lr","Pr(>|t|)"],
+  ifelse(coef_df["lr","Pr(>|t|)"] < 0.05, "TRUE (reject H0)", "FALSE")
+))
 }
 
-cat(paste(output, collapse = "\n\n"))
 ```
 
+Interpretation 2: Joint Model
+```{r}
+#| label: H7 - joint model
+# long format
+df_long <- df_p %>%
+  filter(wave %in% c(1,2)) %>%
+  select(id, wave, lr,
+         starts_with(paste0(k, "_alpha_"))) %>%
+  pivot_longer(
+    cols = starts_with(paste0(k, "_alpha_")),
+    names_to = "issue",
+    values_to = "alpha"
+  ) %>%
+  mutate(
+    issue = gsub(paste0(k, "_alpha_"), "", issue),
+    issue = factor(issue)
+  ) %>%
+  filter(!is.na(alpha))
+
+# full model: separate intercepts and separate LR slopes by issue
+m_full <- lmer(
+  alpha ~ issue + issue:lr + wave + (1 | id),
+  data = df_long
+)
+m_null <- lmer(alpha ~ issue + wave + (1|id), data = df_long)
+summary(m_full)
+
+
+anova(m_null, m_full)
+
+```
 
 ### H8
 \paragraph{H8. Age predicts issue weights.} 
@@ -538,44 +791,69 @@ We model the issue weights for each issue $q$ as
 
 The prediction is $\beta_q\neq 0$. Older and younger participants differ in how strongly they weigh different political issues when mapping individuals. 
 
+
 ```{r}
 #| label: H8
-k = "exponential"
+#| 
+k = "corr"
 
 models_h8 <- lapply(setNames(questions_sc, questions_sc), function(q) {
   df_q <- df_p %>%
-    select(id, wave, age, alpha_q = paste0(k, "_alpha_", q)) %>%
+    filter(wave %in% c(1,2)) %>% 
+    select(id, wave, age, alpha_q = all_of(paste0(k, "_alpha_", q))) %>%
     filter(!is.na(alpha_q), !is.na(age)) %>%
-    mutate(age = as.numeric(scale(age)))
-
+    mutate(age_z = as.numeric(scale(age)))
   
-  lm(alpha_q ~ age, data = df_q)
+  lmer(alpha_q ~ age_z + (1|id) + wave, data = df_q)
 })
 
 # --- Report ---
-
-output <- character(length(questions_sc))
-
 for (i in seq_along(questions_sc)) {
   q   <- questions_sc[i]
   m   <- models_h8[[q]]
-  coef_robust <- coeftest(m, vcov = vcovHC(m, type = "HC3"))
-  f   <- summary(m)$fstatistic
-  p   <- pf(f[1], f[2], f[3], lower.tail = FALSE)
-
-  coef_lines <- capture.output(print(coef_robust))
-  
-  output[i] <- paste(
-    sprintf("--- Issue: %s ---", q),
-    paste(coef_lines, collapse = "\n"),
-    sprintf("Omnibus F-test: F(%.0f, %.0f) = %.4f, p = %.4f", f[2], f[3], f[1], p),
-    sprintf("Reject H0 (no age effect): %s", ifelse(p < 0.05, "TRUE", "FALSE")),
-    sep = "\n"
-  )
+  coef_raw <- summary(m)$coefficients 
+  coef_lines <- capture.output(print(coef_raw))
+  coef_df <- as.data.frame(coef_raw[, 1:5])
+  cat(sprintf("%s  alpha_q = %.3f + %.3f %s  (p = %.4f %s)\n",
+  q,
+  coef_df["(Intercept)", "Estimate"],
+  coef_df["age", "Estimate"],
+  "age", coef_df["age","Pr(>|t|)"],
+  ifelse(coef_df["age","Pr(>|t|)"] < 0.05, "TRUE (reject H0)", "FALSE")
+))
 }
+```
 
-cat(paste(output, collapse = "\n\n"))
+Interpretation 2: Joint Model
+```{r}
+#| label: H8 -- joint model
+# long format
+df_long <- df_p %>%
+  filter(wave %in% c(1,2)) %>%
+  filter(!is.na(age)) %>%
+  mutate(age_z = as.numeric(scale(age))) %>%
+  select(id, wave, age_z,
+         starts_with(paste0(k, "_alpha_"))) %>%
+  pivot_longer(
+    cols = starts_with(paste0(k, "_alpha_")),
+    names_to = "issue",
+    values_to = "alpha"
+  ) %>%
+  mutate(
+    issue = gsub(paste0(k, "_alpha_"), "", issue),
+    issue = factor(issue)
+  ) %>%
+  filter(!is.na(alpha))
 
+# full model: separate intercepts and separate LR slopes by issue
+m_full <- lmer(
+  alpha ~ issue + issue:age_z + wave + (1 | id),
+  data = df_long
+)
+m_null <- lmer(alpha ~ issue + wave + (1|id), data = df_long)
+summary(m_full)
+
+anova(m_null, m_full)
 ```
 
 ### Exploration
@@ -601,19 +879,28 @@ We model issue weights of participant $n$ as
 The prediction is $\beta_q<0$. Issues are assigned higher weight when associated with lower social circle variance.
 
 
+{\color{red} \textbf{CHANGE TO PREREG: I am using standard deviation instead of variance now!!!}}
+
+
 ```{r}
 #| label: H9-combined
+variance_type = "std"
+k = "corr"
 df_h9 <- df_p %>%
+  filter(wave %in% c(1,2)) %>%
   pivot_longer(
-    cols = matches("^std_socialCircle_ops_|^exponential_alpha_"),
+    cols = matches(paste0("^",variance_type,"_socialCircle_ops_|^",k,"_alpha_")),
     names_to = c(".value", "issue"),
-    names_pattern = "^(std_socialCircle_ops|exponential_alpha)_(.*)"
+    names_pattern = all_of(paste0("^(",variance_type,"_socialCircle_ops|",k,"_alpha)_(.*)"))
   ) %>%
-  rename(var_sc = std_socialCircle_ops,
-         alpha  = paste0(k,"_alpha") %>%
+  rename(var_sc =all_of(paste0(variance_type,"_socialCircle_ops")),
+         alpha  = all_of(paste0(k,"_alpha"))) %>%
   filter(!is.na(alpha), !is.na(var_sc))
 
-model_h9 <- lmer(alpha ~ var_sc + (1 | issue) , data = df_h9)
+model_h9 <- lmer(alpha ~ var_sc + wave + (1 | issue) , data = df_h9)
+
+cat(sprintf("=== H9: social circle %s predicts weights (%s) ===\n", variance_type, k) )
+
 summary(model_h9)
 
 # One-sided p-value for beta < 0
@@ -622,48 +909,82 @@ t_stat   <- coef_row["t value"]
 df_resid <- nrow(df_h9) - length(fixef(model_h9))  # approximate
 p_one    <- if (t_stat < 0) pt(t_stat, df_resid) else 1 - pt(t_stat, df_resid)
 
-cat(sprintf("beta  = %.4f\n", coef_row["Estimate"]), 
-sprintf("SE    = %.4f\n", coef_row["Std. Error"]), 
-sprintf("t     = %.4f\n", t_stat), 
-sprintf("p (one-sided, H1: beta < 0) = %.4f\n", p_one), 
-sprintf("Direction correct (beta < 0): %s\n", coef_row["Estimate"] < 0), 
-sprintf("Reject H0 at alpha=0.05:      %s\n", coef_row["Estimate"] < 0 & p_one < 0.05))
+coefs <- summary(model_h9)$coefficients
+tbl <- data.frame(
+  Term     = c("Intercept", "Social circle opinion", "wave"),
+  Estimate = round(coefs[, "Estimate"], 3),
+  SE       = round(coefs[, "Std. Error"], 3),
+  t        = round(coefs[, "t value"], 3),
+  row.names = NULL
+)
+
+print(kable(tbl, format = "simple", align = c("l","r","r","r")))
+
+cat(sprintf("\np (one-sided, H1: beta < 0) = %.4f\n", p_one),
+    sprintf("Direction correct (beta < 0): %-5s  |  Reject H0 at alpha=0.05: %s\n",
+            ifelse(coef_row["Estimate"] < 0, "Yes", "No"),
+            ifelse(coef_row["Estimate"] < 0 & p_one < 0.05, "Yes", "No")))
+```
+
+```{r}
+#| label: plot h9 by question.
+ggplot(df_h9, aes(x = var_sc, y = alpha)) +
+      geom_point(alpha = 0.2, size = 0.4) +
+      geom_smooth(method = "lm", se = TRUE, color = "steelblue") +
+      facet_wrap(~ issue, ncol = 3) +
+      labs(title = paste0("H9: Social circle opinion ",variance_type," vs ",k,"_alpha_q for issue q"),
+           x = all_of(paste0("Social circle opinion ",variance_type," (normalised)")),
+           y = all_of(paste0("Alpha (", k, ")"))) +
+      theme_minimal() +
+      theme(strip.text = element_text(size = 7))
+    ggsave(paste0("h9_plot_",k,"_",variance_type,".png"), width = 16/2.54, height = 9/2.54)
 
 ```
 
 ```{r}
 #| label: H9-separate
-k = "exponential"
+variance_type = "std"
+k = "corr"
 
 models_h9 <- lapply(setNames(questions_sc, questions_sc), function(q) {
   df_q <- df_p %>%
-    select(id, wave, std_socialCircle_ops_q = paste0("std_socialCircle_ops_", q), alpha_q = paste0(k, "_alpha_", q)) %>%
-    filter(!is.na(alpha_q), !is.na(std_socialCircle_ops_q))  
-  lm(alpha_q ~ std_socialCircle_ops_q, data = df_q)
+  filter(wave %in% c(1,2)) %>%
+    select(id, wave, std_socialCircle_ops_q = all_of(paste0(variance_type, "_socialCircle_ops_", q)), alpha_q = all_of(paste0(k, "_alpha_", q))) %>%
+    rename(var_sc_q = paste0(variance_type,"_socialCircle_ops_q")) %>%
+    filter(!is.na(alpha_q), !is.na(var_sc_q))  
+  lmer(alpha_q ~ var_sc_q + wave + (1|id), data = df_q)
 })
+
+
+cat(sprintf("=== H9-separate: social circle %s predicts weights (%s) for each issue ===\n", variance_type, k) )
 
 # --- Report ---
 for (q in questions_sc) {
-  cat(sprintf("\n--- Issue: %s ---\n", q))
-  m        <- models_h9[[q]]
-  smr      <- summary(m)
-  coef_row <- smr$coefficients["std_socialCircle_ops_q", ]
-  beta     <- coef_row["Estimate"]
-  se       <- coef_row["Std. Error"]
-  t_stat   <- coef_row["t value"]
-  df_resid <- m$df.residual
+  cat(sprintf("\n--- Issue: %s (%s, %s) ---\n", q, k, variance_type))
 
-  # One-sided p-value: H1 is beta < 0
-  p_one <- if (t_stat < 0) pt(t_stat, df_resid) else 1 - pt(t_stat, df_resid)
+  m   <- models_h9[[q]]
+  smr <- summary(m)
 
-  cat(sprintf("  beta  = %7.4f\n", beta), 
-  sprintf("  SE    = %7.4f\n", se), 
-  sprintf("  t(%d) = %7.4f\n", df_resid, t_stat), 
-  sprintf("  p (one-sided, H1: beta < 0) = %.4f\n", p_one), 
-  sprintf("  Direction correct (beta < 0): %s\n", beta < 0), 
-  sprintf("  Reject H0 at alpha=0.05:      %s\n", beta < 0 & p_one < 0.05))
+  coef_row <- smr$coefficients["var_sc_q", ]
+
+  beta   <- coef_row["Estimate"]
+  se     <- coef_row["Std. Error"]
+  t_stat <- coef_row["t value"]
+  p_two  <- coef_row["Pr(>|t|)"]
+
+  p_one <- p_two / 2
+  if (t_stat > 0) p_one <- 1 - p_one
+
+cat(sprintf("  beta  = %7.4f\n", beta),
+    sprintf("  SE    = %7.4f\n", se),
+    sprintf("  t     = %7.4f\n", t_stat),
+    sprintf("  p (one-sided, H1: beta < 0) = %.4f\n", p_one),
+    sprintf("  Direction correct (beta < 0): %s\n", beta < 0),
+    sprintf("  Reject H0 at alpha=0.05:      %s\n", beta < 0 & p_one < 0.05)
+)
 }
 ```
+
 
 
 
@@ -679,28 +1000,34 @@ where $v_n$ is the average importance of all issues assigned by participant $n$.
 
 The prediction is $\beta_q<0$. Issues are rated as more important when social circle variance is smaller.
 
+
 ```{r}
 #| label: H10
+variance_type <- "std"
 
 df_h10 <- df_p %>%
+  filter(wave %in% c(1,2)) %>% 
   pivot_longer(
-    cols = matches(paste0("^std_socialCircle_ops_|^w_")),
+    cols = c(all_of(paste0("w_", questions_sc)), paste0(variance_type,"_socialCircle_ops_", questions_sc)),
     names_to = c(".value", "issue"),
-    names_pattern = "^(std_socialCircle_ops|w)_(.*)"
+    names_pattern = all_of(paste0("^(",variance_type,"_socialCircle_ops|w)_(.*)"))
   )%>%
-  rename(var_sc = std_socialCircle_ops) %>%
-  filter(!is.na(w), !is.na(var_sc)) %>% 
-    group_by(id) %>%
-    mutate(delta_w = w - mean(w)) %>%
-    ungroup()
+  rename(var_sc = all_of(paste0(variance_type,"_socialCircle_ops")))
+  #%>%
+    # group_by(id) %>%
+    # mutate(delta_w = w - mean(w)) %>%
+    # ungroup()
 
-model_h10 <- lmer(delta_w ~ var_sc + (1 | issue) , data = df_h10)
+model_h10 <- lmer(w ~ var_sc + wave + (1 | issue) + (1 | id)  , data = df_h10)
+
+cat(sprintf("=== H10: social circle %s predicts issue importance w ===\n", variance_type) )
+
 coef_row  <- summary(model_h10)$coefficients["var_sc", ]
 df_resid  <- coef_row["df"] 
 t_stat   <- coef_row["t value"]
 df_resid <- nrow(df_h10) - length(fixef(model_h10))  # approximate
 p_one    <- if (t_stat < 0) pt(t_stat, df_resid) else 1 - pt(t_stat, df_resid)
-
+cat()
 cat(sprintf("beta  = %.4f\n", coef_row["Estimate"]), 
 sprintf("SE    = %.4f\n", coef_row["Std. Error"]), 
 sprintf("t     = %.4f\n", t_stat), 
@@ -713,59 +1040,35 @@ Plot by issue
 ```{r}
 
 df_h10 %>%
-  ggplot(aes(x = var_sc, y = delta_w, color=issue)) +
+  ggplot(aes(x = var_sc, y = w, color=issue)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", se = TRUE) +
   labs(x = "Social circle variance", 
-       y = "Importance (difference from mean)",
-       title = "H10: Social circle variance vs. within-person importance") +
-  theme_minimal()
+       y = "Importance ",
+       title = sprintf("H10: Social circle %s vs. relative importance", variance_type)) +
+  theme_minimal() 
 ```
 
 Separate Model with different slopes per issue
 ```{r}
-
-df_h10 = df_h10 %>% 
-  mutate(issue = relevel(factor(issue), ref = "rights_indep_integration")
-)
+cat(sprintf("=== H10-separate: social circle %s predicts issue importance w for each issue ===\n", variance_type) )
 
 for (q in questions_sc) {
   
   df_q <- df_h10 %>%
     filter(issue==q) %>%
-    select(id, issue, delta_w, var_sc)  
+    select(id, wave, issue, w, var_sc)  
 
-  m <- lm(delta_w ~ var_sc , data = df_q)
+  m <- lmer(w ~ var_sc +  (1 | id) + wave , data = df_q)
   
-  # Robust SEs
-  coef_robust <- coeftest(m, vcov = vcovHC(m, type = "HC3"))
+  s     <- summary(m)
+  beta  <- s$coefficients["var_sc", "Estimate"]
+  p_val <- s$coefficients["var_sc", "Pr(>|t|)"]
   
-  # Omnibus test — does issue matter at all?
-  f   <- summary(m)$fstatistic
-  p_r <- pf(f[1], f[2], f[3], lower.tail = FALSE)
-  
-  cat(sprintf("\n--- Issue: %s ---\n", q))
-  print(coef_robust)
-  cat(sprintf("Omnibus p = %.4f | Reject H0: %s\n", p_r, p_r < 0.05))
+  cat(sprintf("%s   (beta=%.2f --> p = %.3f | Reject H0: %s)\n",
+              q, beta, p_val, (p_val < 0.05) & (beta < 0)))
 }
 
-```
-
-```{r}
-coefs <- summary(model_h10)$coefficients
-var_sc_rows <- coefs[grepl("var_sc", rownames(coefs)), ]
-
-results <- as.data.frame(var_sc_rows) %>%
-  rownames_to_column("term") %>%
-  mutate(
-    p_one = ifelse(`t value` < 0, 
-                   pt(`t value`, df.residual(model_h10)), 
-                   1 - pt(`t value`, df.residual(model_h10))),
-    direction_correct = Estimate < 0,
-    reject_h0 = direction_correct & p_one < 0.05
-  )
-
-print(results)
 ```
 
 ### H11
@@ -785,76 +1088,102 @@ where the new $\beta_2$-term represents the influence of overall social circle b
 
 The prediction is $\beta_2>0$ and that equation \ref{eq:liking} improves the predictions of the baseline model from \textbf{H2} (equation \ref{eq:symp_base}/\ref{eq:likingbase}) using R2, AIC, and BIC as model quality indicators. Voters are more liked in general if the participant's overall social circle variance is higher.
 
+
+#### TODO: This hypothesis is kind of wrong. We have 1 avg_social_circle_std per person and 7 pixel_dist and sympathy for 7 parties. But the avg_social_circle_std is already included in the random intercept.
+
+```{r}
+variance_type = "std"
+
+df_h2And11 <- df_diff %>%
+  filter(dot1 == "self", dot2 %in% partiesVars, wave == 2) %>%
+  select(id, sympathy, party, pixel_dist)
+
+avg_var_sc <- df_p %>%
+  filter(wave == 2) %>%
+  select(id, all_of(paste0(variance_type, "_socialCircle_ops_", questions_sc))) %>%
+  drop_na() %>%
+  mutate(avg_var_sc = rowMeans(across(all_of(paste0(variance_type, "_socialCircle_ops_", questions_sc))))) %>%
+  select(id, avg_var_sc)
+
+df_h11 <- df_h2And11 %>%
+  left_join(avg_var_sc, by = "id") %>%
+  mutate(
+    pixel_dist_z     = as.numeric(scale(pixel_dist)),
+    avg_var_sc_z = as.numeric(scale(avg_var_sc))
+  ) 
+```
+
+```{r}
+
+df_h11_agg <- df_h11 %>%
+  group_by(id, avg_var_sc_z) %>%
+  summarise(mean_sympathy = mean(sympathy, na.rm = TRUE), .groups = "drop")
+
+model_h11_agg <- lm(mean_sympathy ~ avg_var_sc_z, data = df_h11_agg)
+summary(model_h11_agg)
+```
+
+
 ```{r}
 #| label: H11
 # #| 
-df_h2_h11 <- df_diff %>%
-  filter(dot1 == "self", dot2 %in% partiesVars, wave == 2) %>%
-  select(id, wave, sympathy, party, pixel_dist)
-# overall_std_socialCircle: sum over questions per participant (level-2 predictor)
-overall_std_sc <- df_p %>%
-  filter(wave == 2) %>%
-  select(id, all_of(paste0("std_socialCircle_ops_", questions_sc))) %>%
-  drop_na() %>%
-  mutate(overall_std_socialCircle = rowSums(across(all_of(paste0("std_socialCircle_ops_", questions_sc))))) %>%
-  select(id, overall_std_socialCircle)
 
-df_h11 <- df_h2_h11 %>%
-  left_join(overall_std_sc, by = "id") %>%
-  mutate(
-    pixel_dist_z               = as.numeric(scale(pixel_dist)),
-    overall_std_socialCircle_z = as.numeric(scale(overall_std_socialCircle))
-  )
+model_ext <- lmer(
+  sympathy ~ pixel_dist_z * avg_var_sc_z + (1 + pixel_dist_z | id),
+  data = df_h11, REML = FALSE
+)
 
-# Baseline (H2): y_n,r = β0 + β1*d_n,self-r + u_n + ε
+summary(model_ext)
+
+
+# Baseline (H2): y_{n,r} = β0 + β1*d_{n,self-r} + u_n + ε
 model_base <- lmer(sympathy ~ pixel_dist_z + (1 | id),
                    data = df_h11, REML = FALSE)
 
-# Extended (H11): y_n,r = β0 + β1*d_n,self-r + β2*Σvar_n,q + u_n + ε
-model_ext <- lmer(sympathy ~ pixel_dist_z + overall_std_socialCircle_z + (1 | id),
+# Extended (H11): y_{n,r} = β0 + β1*d_{n,self-r} + β2*Σvar_{n,q} + v_n + ε
+model_ext <- lmer(sympathy ~ pixel_dist_z + avg_var_sc_z + (1 | id),
                   data = df_h11, REML = FALSE)
 
-# Corrected df for between-person predictor
+# Corrected df for between-person predictor (level-2: n_participants - 2)
 n_participants <- n_distinct(df_h11$id)
 df_corrected   <- n_participants - 2
 
-beta2  <- fixef(model_ext)["overall_std_socialCircle_z"]
+beta2  <- fixef(model_ext)["avg_var_sc_z"]
 beta1  <- fixef(model_ext)["pixel_dist_z"]
-se_b2  <- sqrt(diag(vcov(model_ext)))["overall_std_socialCircle_z"]
+se_b2  <- sqrt(diag(vcov(model_ext)))["avg_var_sc_z"]
 se_b1  <- sqrt(diag(vcov(model_ext)))["pixel_dist_z"]
 t_stat <- beta2 / se_b2
+p_two  <- 2 * pt(abs(t_stat), df = df_corrected, lower.tail = FALSE)
+p_one  <- if (t_stat > 0) p_two / 2 else 1 - p_two / 2
 
-p_two <- 2 * pt(abs(t_stat), df = df_corrected, lower.tail = FALSE)
-p_one <- if (t_stat > 0) p_two / 2 else 1 - p_two / 2
+r2_base <- r2(model_base)
+r2_ext  <- r2(model_ext)
 
-marginal_r2 <- function(model, data, outcome = "sympathy") {
-  y      <- data[[outcome]]
-  y_hat  <- fitted(model)
-  ss_res <- sum((y - y_hat)^2, na.rm = TRUE)
-  ss_tot <- sum((y - mean(y, na.rm = TRUE))^2, na.rm = TRUE)
-  1 - ss_res / ss_tot
-}
+# Named access to marginal (R2m) and conditional (R2c) R²
+r2m_base <- r2_base$R2_marginal
+r2c_base <- r2_base$R2_conditional
+r2m_ext  <- r2_ext$R2_marginal
+r2c_ext  <- r2_ext$R2_conditional
 
-# r2_base <- marginal_r2(model_base, df_h11)
-# r2_ext  <- marginal_r2(model_ext,  df_h11)
-r2_base <- r.squaredGLMM(model_base)
-r2_ext  <- r.squaredGLMM(model_ext)
-
-cat(sprintf("H11 Test:\n"), 
-sprintf("  β1 (standardised)       = %.4f\n", beta1), 
-sprintf("  β₂ (standardised)       = %.4f\n", beta2), 
-sprintf("  SE                      = %.4f\n", se_b2), 
-sprintf("  t                       = %.4f\n", t_stat), 
-sprintf("  df (corrected)          = %d\n",   df_corrected), 
-sprintf("  p two-sided             = %.6f\n", p_two), 
-sprintf("  p one-sided (β₂ > 0)   = %.6f\n", p_one), 
-sprintf("  Reject H0 (β₂ ≤ 0)     = %s\n",   p_one < 0.05 && beta2 > 0), 
-sprintf("  R² marginal    baseline / extended = %.4f / %.4f (Δ = %+.4f)\n",
-            r2_base[1], r2_ext[1], r2_ext[1] - r2_base[1]),
-sprintf("  R² conditional baseline / extended = %.4f / %.4f (Δ = %+.4f)\n",
-            r2_base[2], r2_ext[2], r2_ext[2] - r2_base[2]),
-sprintf("  AIC baseline / extended = %.2f / %.2f (Δ = %+.2f)\n", AIC(model_base), AIC(model_ext), AIC(model_ext) - AIC(model_base)), 
-sprintf("  BIC baseline / extended = %.2f / %.2f (Δ = %+.2f)\n", BIC(model_base), BIC(model_ext), BIC(model_ext) - BIC(model_base)))
+cat(
+  sprintf("H11 Test:\n"),
+  sprintf("  β1 (pixel_dist standardised)       = %.4f\n", beta1),
+  sprintf("  β₂ (social circle variance standardised)       = %.4f\n", beta2),
+  sprintf("  SE                      = %.4f\n", se_b2),
+  sprintf("  t                       = %.4f\n", t_stat),
+  sprintf("  df (corrected)          = %d\n",   df_corrected),
+  sprintf("  p two-sided             = %.6f\n", p_two),
+  sprintf("  p one-sided (β₂ > 0)   = %.6f\n", p_one),
+  sprintf("  Reject H0 (β₂ ≤ 0)     = %s\n",   p_one < 0.05 && beta2 > 0),
+  sprintf("  R² marginal    baseline / extended = %.4f / %.4f (Δ = %+.4f)\n",
+          r2m_base, r2m_ext, r2m_ext - r2m_base),
+  sprintf("  R² conditional baseline / extended = %.4f / %.4f (Δ = %+.4f)\n",
+          r2c_base, r2c_ext, r2c_ext - r2c_base),
+  sprintf("  AIC baseline / extended = %.2f / %.2f (Δ = %+.2f)\n",
+          AIC(model_base), AIC(model_ext), AIC(model_ext) - AIC(model_base)),
+  sprintf("  BIC baseline / extended = %.2f / %.2f (Δ = %+.2f)\n",
+          BIC(model_base), BIC(model_ext), BIC(model_ext) - BIC(model_base))
+)
 ```
 
 ### H12a
@@ -873,16 +1202,19 @@ Participants with less variation in their social circles with respect to issue $
 
 ```{r}
 #| label: H12a
+
+variance_type = "std"
 df_h12a <- df_p %>%
+  filter(wave %in% c(1,2)) %>%
   select(-"P_tot") %>%
   pivot_longer(
-    cols = c(paste0("P_", questions_sc), paste0("std_socialCircle_ops_", questions_sc)),
+    cols = c(all_of(paste0("P_", questions_sc)), all_of(paste0(variance_type, "_socialCircle_ops_", questions_sc))),
     names_to = c(".value", "issue"),
-    names_pattern = "^(std_socialCircle_ops|P)_(.*)"
-  ) %>%
-  rename(var_sc = std_socialCircle_ops)
+    names_pattern = all_of(paste0("^(",variance_type,"_socialCircle_ops|P)_(.*)"))
+    ) %>%
+  rename(var_sc = paste0(variance_type,"_socialCircle_ops"))
 
-model_h12a <- lmer(P ~ var_sc + (1 | issue) + (1 | id) , data = df_h12a)
+model_h12a <- lmer(P ~ var_sc + (1 | issue) + (1 | id) + wave , data = df_h12a)
 summary(model_h12a)
 
 # One-sided p-value for beta < 0
@@ -903,9 +1235,9 @@ df_h12a %>%
   ggplot(aes(x = var_sc, y = P, color=issue)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", se = TRUE) +
-  labs(x = "Social circle variance", 
+  labs(x = paste0("Social circle ",variance_type), 
        y = "Polarisation",
-       title = "H12a: Social circle variance vs. issue polarisation") +
+       title = paste0("H12a: Social circle ",variance_type," vs. issue polarisation")) +
   theme_minimal()
 
 ```
@@ -928,18 +1260,18 @@ Participants with less variation in their social circles averaged over all issue
 #| label: H12b
 
 df_h12b <- df_p %>%
-  select(id, wave, all_of(paste0("std_socialCircle_ops_", questions_sc)), P_tot) %>%
+  select(id, wave, all_of(paste0(variance_type,"_socialCircle_ops_", questions_sc)), P_tot) %>%
   drop_na() %>%
-  mutate(overall_std_socialCircle = rowSums(across(all_of(paste0("std_socialCircle_ops_", questions_sc)))))
+  mutate(avg_var_sc = rowSums(across(all_of(paste0(variance_type,"_socialCircle_ops_", questions_sc)))))
 
-model <- lmer(P_tot ~ overall_std_socialCircle + (1 | id),
+model <- lmer(P_tot ~ avg_var_sc + (1 | id),
               data = df_h12b, REML = TRUE)
 
 n_participants <- n_distinct(df_h12b$id)
 df_corrected   <- n_participants - 2
 
-beta   <- fixef(model)["overall_std_socialCircle"]
-se_b   <- sqrt(diag(vcov(model)))["overall_std_socialCircle"]
+beta   <- fixef(model)["avg_var_sc"]
+se_b   <- sqrt(diag(vcov(model)))["avg_var_sc"]
 t_stat <- beta / se_b
 p_two  <- 2 * pt(abs(t_stat), df = df_corrected, lower.tail = FALSE)
 p_one  <- p_two / 2
@@ -953,12 +1285,12 @@ sprintf("  Reject H0 (β < 0): %s\n", p_one < 0.05 && beta < 0))
 
 
 df_h12b %>%
-  ggplot(aes(x = overall_std_socialCircle, y = P_tot)) +
+  ggplot(aes(x = avg_var_sc, y = P_tot)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", se = TRUE) +
-  labs(x = "Overall Social circle variance", 
+  labs(x = paste0("average social circle ",variance_type), 
        y = "Polarisation",
-       title = "H12b: Social circle variance vs. total polarisation") +
+       title = paste0("H12b: Social circle ",variance_type," vs. total polarisation")) +
   theme_minimal()
 ```
 
@@ -975,9 +1307,8 @@ with fit parameters $\hat b_n$, and $\hat c_n$.
 The prediction is that this model (with $\hat\alpha_{n,q} = w_{n,q}$) outperforms (i) an unweighted model with $\hat\alpha_{n,q}=1/6$ and (ii) a population weight model with $\hat\alpha_{n,q} = 1/n \cdot \sum_n w_{n,q}$. We use R2, AIC, and BIC as model quality indicators.
 
 ```{r}
-
 weighted_l1 <- function(deltas, alpha) {
-  as.vector(as.matrix(deltas) %*% as.numeric(alpha))          # overall belief distance
+  as.vector(as.matrix(deltas) %*% as.numeric(alpha))
 }
 
 linear_kernel <- function(x, a, b) {
@@ -988,75 +1319,100 @@ exp_kernel <- function(x, b, c) {
   1 - exp(-b * (x ^ c))
 }
 
-k <- "exponential"
-deltas = c(paste0("deltaX_", questions_sc))
-alphas = c(paste0(k,"_alpha_", questions_sc))
-weights = c(paste0("w_", questions_sc))
-alphas_population = df_p |> select(alphas) |> colMeans()
+deltas              <- paste0("deltaX_", questions_sc)
+alphas_lin          <- paste0("linear_alpha_", questions_sc)
+alphas_exp          <- paste0("exponential_alpha_", questions_sc)
+weights             <- paste0("w_", questions_sc)
+alphas_population_lin <- df_p |> select(all_of(alphas_lin)) |> colMeans()
+alphas_population_exp <- df_p |> select(all_of(alphas_exp)) |> colMeans()
 
-# join participant-level alphas onto row-level data
+# --- Build per-pair prediction data ---
 df_h13 <- df_diff |>
+  filter(wave %in% c(1, 2)) |>
   left_join(
     df_p |> select(id, wave, all_of(weights)),
     by = c("id", "wave")
-  ) |> 
+  ) |>
   mutate(
-  avg_weight = rowSums(pick(all_of(weights))),
-  ) |> 
-  mutate(
-  predicted_d_linear = linear_kernel(rowSums(
-        pick(all_of(deltas)) * pick(all_of(alphas))
-  ), linear_param1, linear_param2), 
-  predicted_d_exp = exp_kernel(rowSums(
-        pick(all_of(deltas)) * pick(all_of(alphas))
-  ), exponential_param1, exponential_param2), 
-  predicted_d_weights = {
-      w <- as.matrix(pick(all_of(weights)))
-      d <- as.matrix(pick(all_of(deltas)))
+    avg_weight = rowSums(pick(all_of(weights))),
 
+    predicted_d_linear = linear_kernel(
+      rowSums(pick(all_of(deltas)) * pick(all_of(alphas_lin))),
+      linear_param1, linear_param2
+    ),
+
+    predicted_d_exp = exp_kernel(
+      rowSums(pick(all_of(deltas)) * pick(all_of(alphas_exp))),
+      exponential_param1, exponential_param2
+    ),
+
+    predicted_d_weights = {
+      w     <- as.matrix(pick(all_of(weights)))
+      d     <- as.matrix(pick(all_of(deltas)))
       w_sum <- rowSums(w, na.rm = TRUE)
-      num <- rowSums(d * w, na.rm = TRUE)
-
-      uniform <- rowSums(d) / ncol(w)
-
+      num   <- rowSums(d * w, na.rm = TRUE)
+      uniform_fallback <- rowSums(d) / ncol(w)
       exp_kernel(
-        ifelse(w_sum == 0, uniform, num / w_sum),
-        exponential_param1,
-        exponential_param2
+        ifelse(w_sum == 0, uniform_fallback, num / w_sum),
+        exponential_param1, exponential_param2
       )
-    }, 
-  predicted_d_population = exp_kernel(rowSums(
-        pick(all_of(deltas)) * as.numeric(alphas_population)
-  ), exponential_param1, exponential_param2), 
-  predicted_d_uniform = exp_kernel(rowSums(
-        pick(all_of(deltas))
-  ), exponential_param1, exponential_param2)) 
+    },
+
+    predicted_d_population_exp = exp_kernel(
+      rowSums(pick(all_of(deltas)) * as.numeric(alphas_population_exp)),
+      exponential_param1, exponential_param2
+    ),
+
+    predicted_d_population_lin = linear_kernel(
+      rowSums(pick(all_of(deltas)) * as.numeric(alphas_population_lin)),
+      linear_param1, linear_param2
+    ),
+
+    predicted_d_uniform_exp = exp_kernel(
+      rowSums(pick(all_of(deltas))) / length(questions_sc),
+      exponential_param1, exponential_param2
+    ),
+
+    predicted_d_uniform_lin = linear_kernel(
+      rowSums(pick(all_of(deltas))) / length(questions_sc),
+      linear_param1, linear_param2
+    )
+  )
+
+# --- Residuals and MSE summary ---
 df_h13 <- df_h13 |>
   mutate(
-    err_weights   = pixel_dist - predicted_d_weights,
-    err_population = pixel_dist - predicted_d_population,
-    err_uniform    = pixel_dist - predicted_d_uniform,
-    err_fit_linear = pixel_dist - predicted_d_linear,
-    err_fit_exp    = pixel_dist - predicted_d_exp
+    err_weights        = pixel_dist - predicted_d_weights,
+    err_population_exp = pixel_dist - predicted_d_population_exp,
+    err_population_lin = pixel_dist - predicted_d_population_lin,
+    err_uniform_exp    = pixel_dist - predicted_d_uniform_exp,
+    err_uniform_lin    = pixel_dist - predicted_d_uniform_lin,
+    err_fit_linear     = pixel_dist - predicted_d_linear,
+    err_fit_exp        = pixel_dist - predicted_d_exp
   )
 
-  mse_summary <- df_h13 |>
+mse_summary <- df_h13 |>
   summarise(
-    mse_w        = mean(err_weights^2, na.rm = TRUE),
-    mse_p        = mean(err_population^2, na.rm = TRUE),
-    mse_u        = mean(err_uniform^2, na.rm = TRUE),
-    mse_linear   = mean(err_fit_linear^2, na.rm = TRUE),
-    mse_exp      = mean(err_fit_exp^2, na.rm = TRUE)
+    mse_weights        = mean(err_weights^2,        na.rm = TRUE),
+    mse_population_lin = mean(err_population_lin^2, na.rm = TRUE),
+    mse_population_exp = mean(err_population_exp^2, na.rm = TRUE),
+    mse_uniform_lin    = mean(err_uniform_lin^2,    na.rm = TRUE),
+    mse_uniform_exp    = mean(err_uniform_exp^2,    na.rm = TRUE),
+    mse_fit_linear     = mean(err_fit_linear^2,     na.rm = TRUE),
+    mse_fit_exp        = mean(err_fit_exp^2,        na.rm = TRUE)
   )
 
-  y <- df_h13$pixel_dist
+# --- R² and model comparison table ---
+y <- df_h13$pixel_dist
 
 pred_mat <- cbind(
-  weights    = df_h13$predicted_d_weights,
-  population = df_h13$predicted_d_population,
-  uniform    = df_h13$predicted_d_uniform,
-  fit_linear = df_h13$predicted_d_linear,
-  fit_exp    = df_h13$predicted_d_exp
+  weights          = df_h13$predicted_d_weights,
+  population_lin   = df_h13$predicted_d_population_lin,
+  population_exp   = df_h13$predicted_d_population_exp,
+  uniform_lin      = df_h13$predicted_d_uniform_lin,
+  uniform_exp      = df_h13$predicted_d_uniform_exp,
+  fit_linear       = df_h13$predicted_d_linear,
+  fit_exp          = df_h13$predicted_d_exp
 )
 
 r2_vec <- function(y, mat) {
@@ -1064,61 +1420,98 @@ r2_vec <- function(y, mat) {
   1 - colSums((mat - y)^2, na.rm = TRUE) / ss_tot
 }
 
-model_table <- tibble::tibble(
+model_table <- tibble(
   model = colnames(pred_mat),
   mse   = colMeans((pred_mat - y)^2, na.rm = TRUE)
 ) |>
-  dplyr::mutate(
-    rmse = sqrt(mse),
-    r2   = r2_vec(y, pred_mat)
-  ) |>
-  dplyr::arrange(mse)
-model_table <- model_table |>
   mutate(
-    delta_mse = mse - mse[model == "uniform"]
-  )
+    rmse             = sqrt(mse),
+    r2               = r2_vec(y, pred_mat),
+    delta_mse_lin    = mse - mse[model == "uniform_lin"],
+    delta_mse_exp    = mse - mse[model == "uniform_exp"]
+  ) |>
+  arrange(mse)
 
-
-```
-
-```{r}
-y <- df_h13$pixel_dist
-
+# --- Significance testing vs. uniform_exp baseline ---
 err_mat <- cbind(
-  weights    = (df_h13$predicted_d_weights   - y)^2,
-  population = (df_h13$predicted_d_population - y)^2,
-  uniform    = (df_h13$predicted_d_uniform    - y)^2,
-  fit_linear = (df_h13$predicted_d_linear     - y)^2,
-  fit_exp    = (df_h13$predicted_d_exp        - y)^2
+  weights        = (df_h13$predicted_d_weights        - y)^2,
+  population_lin = (df_h13$predicted_d_population_lin - y)^2,
+  population_exp = (df_h13$predicted_d_population_exp - y)^2,
+  uniform_lin    = (df_h13$predicted_d_uniform_lin    - y)^2,
+  uniform_exp    = (df_h13$predicted_d_uniform_exp    - y)^2,
+  fit_linear     = (df_h13$predicted_d_linear         - y)^2,
+  fit_exp        = (df_h13$predicted_d_exp            - y)^2
 )
 
-baseline <- err_mat[, "uniform"]
+baseline <- err_mat[, "uniform_exp"]
+
+mean_diff <- colMeans(err_mat - baseline, na.rm = TRUE)
 
 p_values_wilcox <- sapply(colnames(err_mat), function(m) {
-  if (m == "uniform") return(NA)
-  
+  if (m == "uniform_exp") return(NA)
   wilcox.test(err_mat[, m], baseline, paired = TRUE)$p.value
 })
 
-model_table_sig <- tibble::tibble(
-  model = colnames(err_mat),
-  mse   = colMeans(err_mat, na.rm = TRUE),
-  rmse  = sqrt(mse),
-  mean_diff_vs_uniform = mean_diff,
-  p_ttest = p_values,
-  p_wilcox = p_values_wilcox
+model_table_sig <- tibble(
+  model               = names(p_values_wilcox),
+  mean_diff_vs_uniform = mean_diff[names(p_values_wilcox)],
+  p_wilcox            = p_values_wilcox
 ) |>
-  dplyr::arrange(mse)
+  add_row(
+    model                = "uniform_exp",
+    mean_diff_vs_uniform = NA,
+    p_wilcox             = NA
+  )
 
-rel_improve <- (model_table$mse[model_table$model == "uniform"] - model_table$mse) /
-               model_table$mse[model_table$model == "uniform"]
+n_pairs <- sum(!is.na(y))  # number of pair-level observations
 
-print(model_table_sig)
+participant_waves <- df_h13 |>
+  distinct(id, wave) |>
+  nrow()
 
-print(rel_improve)
-mean_diff <- colMeans(err_mat - baseline, na.rm = TRUE)
+k_lookup <- tibble(
+  model = c("weights", "population_lin", "population_exp",
+            "uniform_lin", "uniform_exp",
+            "fit_linear", "fit_exp"),
+  k     = c(
+    2 * participant_waves,  # weights:         kernel only
+    2 * participant_waves + length(questions_sc),  # population_lin:  kernel only
+    2 * participant_waves + length(questions_sc),  # population_exp:  kernel only
+    2 * participant_waves,  # uniform_lin:     kernel only
+    2 * participant_waves,  # uniform_exp:     kernel only
+    (2+length(questions_sc)) * participant_waves,  # fit_linear:      kernel + 6 alphas
+    (2+length(questions_sc)) * participant_waves   # fit_exp:         kernel + 6 alphas
+  )
+)
 
-print(mean_diff)
+
+compute_aic_bic <- function(mse, k, n) {
+  rss <- mse * n
+  aic <- n * log(rss / n) + 2 * k
+  bic <- n * log(rss / n) + k * log(n)
+  list(aic = aic, bic = bic)
+}
+
+comparison_tbl <- model_table |>
+  select(model, mse, rmse, r2) |>
+  left_join(
+    model_table_sig |> select(model, mean_diff_vs_uniform, p_wilcox),
+    by = "model"
+  ) |>
+  left_join(k_lookup, by = "model") |>
+  mutate(
+    rel_improve = (mse[model == "uniform_exp"] - mse) /
+                   mse[model == "uniform_exp"],
+    aic = map2_dbl(mse, k, ~ compute_aic_bic(.x, .y, n)$aic),
+    bic = map2_dbl(mse, k, ~ compute_aic_bic(.x, .y, n)$bic)
+  ) |>
+  select(-k) |>
+  arrange(mse) |>
+  mutate(across(where(is.numeric), ~ sprintf("%.4f", .)))
+
+print(comparison_tbl)
+
+
 ```
 
 \paragraph{Explorative Analyses.} 
@@ -1184,7 +1577,7 @@ The prediction is~$\Delta \mathrm{var}_T >0$ (one-sample t-test with significanc
 
 ```{r}
 #| label: H14
-
+variance_type="std"
 
 treatment_ids <- df_p |> 
   filter(wave==2, treatment_wave2==TRUE) |>
@@ -1199,22 +1592,22 @@ control_ids <- df_p |>
 df_h14 <- df_p |>
   filter(id %in% c(treatment_ids, control_ids)) |>
   pivot_longer(
-    cols = matches("^std_socialCircle_ops_"),
+    cols = matches(paste0(variance_type,"_socialCircle_ops_")),
     names_to  = c(".value", "issue"),
-    names_pattern = "^(std_socialCircle_ops)_(.*)"
+    names_pattern = all_of(paste0("^(",variance_type,"_socialCircle_ops)_(.*)"))
   ) |>
   pivot_wider(
     id_cols     = c(id, issue),
     names_from  = wave,
-    names_prefix = "std_socialCircle_ops_wave",
-    values_from  = std_socialCircle_ops
+    names_prefix = "var_sc_wave",
+    values_from  = all_of(paste0(variance_type,"_socialCircle_ops"))
   ) |>
   mutate(
     group = case_when(
       id %in% treatment_ids ~ "treatment",
       id %in% control_ids   ~ "control"
     ),
-    delta = std_socialCircle_ops_wave2 - std_socialCircle_ops_wave1
+    delta = var_sc_wave2 - var_sc_wave1
   )
 
 # ── 3. Quick sanity check ──────────────────────────────────────────────────
@@ -1222,8 +1615,8 @@ df_h14 <- df_p |>
 df_h14 |>
   group_by(group) |>
   summarise(
-    mean_wave1 = mean(std_socialCircle_ops_wave1, na.rm = TRUE),
-    mean_wave2 = mean(std_socialCircle_ops_wave2, na.rm = TRUE),
+    mean_wave1 = mean(var_sc_wave1, na.rm = TRUE),
+    mean_wave2 = mean(var_sc_wave2, na.rm = TRUE),
     mean_delta = mean(delta, na.rm = TRUE),
     n = n()
   )
@@ -1235,7 +1628,7 @@ control   <- df_h14 |> filter(group == "control")
 
 t_test_h1 <- t.test(treatment$delta, mu = 0, alternative = "greater")
 
-cat(sprintf("H1 Test (Treatment: wave2 > wave1):\n"),
+cat(sprintf("H14 Test (Treatment: wave2 > wave1):\n"),
     sprintf("  Mean delta (wave2 - wave1) = %.4f (+- %.4f)\n",
             mean(treatment$delta, na.rm = TRUE),
             sd(treatment$delta,   na.rm = TRUE)),
@@ -1280,7 +1673,69 @@ The prediction is $\beta_1 <0$. Higher relative social circle variance on one is
 
 ```{r}
 #| label: H15
+variance_type = "std"
+df_h15 <- df_p |>
+  filter(id %in% treatment_ids) |>
+  pivot_longer(
+    cols = matches(paste0(variance_type,"_socialCircle_ops_")),
+    names_to  = c(".value", "issue"),
+    names_pattern = paste0("^(",variance_type,"_socialCircle_ops)_(.*)")
+  ) |>
+  rename(
+var_sc = paste0(variance_type, "_socialCircle_ops"), 
+  ) |>
+  pivot_wider(
+    id_cols     = c(id, issue),
+    names_from  = wave,
+    names_prefix = "w",
+    values_from  = var_sc
+  ) |>
+  rename(var_w1 = w1, var_w2 = w2) |>
+  mutate(delta_var = var_w2 - var_w1)
 
+df_h15 <- df_h15 |>
+  group_by(id) |>
+  mutate(
+    sum_delta_var = sum(delta_var, na.rm = TRUE),
+    rel_delta_var = if_else(sum_delta_var != 0,
+                            delta_var / sum_delta_var,
+                            NA_real_)
+  ) |>
+  ungroup()
+
+df_weights <- df_p |>
+  filter(id %in% treatment_ids) |>
+  pivot_longer(
+    cols = matches(paste0("^", k, "_alpha_")),
+    names_to  = c(".value", "issue"),
+    names_pattern = paste0("^(", k, "_alpha)_(.*)")
+  ) |>
+  pivot_wider(
+    id_cols    = c(id, issue),
+    names_from = wave,
+    names_prefix = "alpha_w",
+    values_from  = all_of(paste0(k, "_alpha"))
+  )
+
+df_h15 <- df_h15 |>
+  left_join(df_weights, by = c("id", "issue"))
+
+# α_{n,q}(w2) = α_{n,q}(w1) + β1 * rel_delta_var + ε
+model_h15 <- lm(alpha_w2 ~ alpha_w1 + rel_delta_var, data = df_h15)
+
+summary(model_h15)
+
+beta1     <- coef(model_h15)["rel_delta_var"]
+se_beta1  <- summary(model_h15)$coefficients["rel_delta_var", "Std. Error"]
+t_stat    <- summary(model_h15)$coefficients["rel_delta_var", "t value"]
+p_twosided <- summary(model_h15)$coefficients["rel_delta_var", "Pr(>|t|)"]
+p_onetailed <- p_twosided / 2  # one-tailed p-value for β1 < 0
+
+cat(sprintf("=== H15 Test (beta1 < 0, %s alpha weights decreased across waves as social circle %s increased): === \n", k, variance_type),
+    sprintf("  beta1 = %.4f (+- %.4f)\n", beta1, se_beta1),
+    sprintf("  t = %.4f\n", t_stat),
+    sprintf("  p (one-tailed, beta1 < 0) = %.4f\n", p_onetailed),
+    sprintf("  H15 supported: %s\n", beta1 < 0 && p_onetailed < 0.05))
 
 ```
 
@@ -1300,7 +1755,69 @@ The prediction is $\beta_1<0$. When overall social circle variance increases, th
 ```{r}
 #| label: H16
 
+# ── 1. Pull distances for wave 1 and wave 2 ────────────────────────────────
+df_h16_w1 <- df_diff |>
+  filter(dot1 == "self", dot2 %in% partiesVars, wave == 1) |>
+  select(id, dot2, pixel_dist_w1 = pixel_dist)
 
+df_h16_w2 <- df_diff |>
+  filter(dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
+  select(id, dot2, pixel_dist_w2 = pixel_dist)
+
+# ── 2. Pull deltaX and variance change, join everything ───────────────────
+deltaX_cols <- paste0("deltaX_", questions_sc)
+
+df_h16_dx <- df_diff |>
+  filter(dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
+  select(id, dot2, all_of(deltaX_cols))
+
+# Variance change per participant per issue 
+df_h16_var <- df_h15 |>                        
+  select(id, issue, delta_var)
+
+# ── 3. Compute weighted variance term: sum_q( deltaX_{n,r,q} * delta_var_{n,q} )
+
+df_h16_var_wide <- df_h16_var |>
+  pivot_wider(
+    id_cols     = id,
+    names_from  = issue,
+    names_prefix = "delta_var_",
+    values_from = delta_var
+  )
+
+df_h16 <- df_h16_dx |>
+  left_join(df_h16_w1, by = c("id", "dot2")) |>
+  left_join(df_h16_w2, by = c("id", "dot2")) |>
+  left_join(df_h16_var_wide, by = "id") |>
+  mutate(
+    group = if_else(id %in% treatment_ids, "treatment", "control"),
+    weighted_var_change = rowSums(
+      across(all_of(deltaX_cols)) *
+      across(all_of(paste0("delta_var_", questions_sc))),
+      na.rm = TRUE
+    ),
+    treatment_x_wvc = if_else(group == "treatment", weighted_var_change, 0)
+  )
+
+# ── 4. Fit model ───────────────────────────────────────────────────────────
+# d_w2 = d_w1 + β1 * I(treatment) * weighted_var_change + ε
+
+model_h16 <- lm(pixel_dist_w2 ~ pixel_dist_w1 + treatment_x_wvc, data = df_h16)
+
+summary(model_h16)
+
+# ── 5. Test H16: β1 < 0 ───────────────────────────────────────────────────
+
+beta1       <- coef(model_h16)["treatment_x_wvc"]
+se_beta1    <- summary(model_h16)$coefficients["treatment_x_wvc", "Std. Error"]
+t_stat      <- summary(model_h16)$coefficients["treatment_x_wvc", "t value"]
+p_onetailed <- summary(model_h16)$coefficients["treatment_x_wvc", "Pr(>|t|)"] / 2
+
+cat(sprintf("H16 Test (beta1 < 0):\n"),
+    sprintf("  beta1 = %.4f (+- %.4f)\n", beta1, se_beta1),
+    sprintf("  t = %.4f\n", t_stat),
+    sprintf("  p (one-tailed, beta1 < 0) = %.4f\n", p_onetailed),
+    sprintf("  H16 supported: %s\n", beta1 < 0 && p_onetailed < 0.05))
 
 ```
 
@@ -1318,6 +1835,44 @@ The prediction is $\beta_1 > 0$. When overall social circle variance increases, 
 
 ```{r}
 #| label: H17
+
+df_h17 <- df_diff |>
+  filter(dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
+  select(id, dot2, sympathy, all_of(deltaX_cols)) |>
+  left_join(df_h16_var_wide, by = "id") |>        # reuse variance change from H16
+  mutate(
+    group = if_else(id %in% treatment_ids, "treatment", "control"),
+    weighted_var_change = rowSums(
+      across(all_of(deltaX_cols)) *
+      across(all_of(paste0("delta_var_", questions_sc))),
+      na.rm = TRUE
+    ),
+    treatment_x_wvc = if_else(group == "treatment", weighted_var_change, 0)
+  )
+
+# ── 2. Fit mixed model with participant random effect (u_n) ────────────────
+
+library(lme4)
+
+model_h17 <- lmer(sympathy ~ 1 + treatment_x_wvc + (1 | id), data = df_h17)
+
+summary(model_h17)
+
+# ── 3. Test H17: β1 > 0 ───────────────────────────────────────────────────
+
+coef_table  <- summary(model_h17)$coefficients
+beta1       <- coef_table["treatment_x_wvc", "Estimate"]
+se_beta1    <- coef_table["treatment_x_wvc", "Std. Error"]
+t_stat      <- coef_table["treatment_x_wvc", "t value"]
+
+# lmer doesn't give p-values by default; use normal approximation
+p_onetailed <- pnorm(t_stat, lower.tail = FALSE)   # one-tailed: β1 > 0
+
+cat(sprintf("=== H17 Test (beta1 > 0, in treatment condition, increasing social circle variance also increases likeability of voters): ===\n"),
+    sprintf("  beta1 = %.4f (+- %.4f)\n", beta1, se_beta1),
+    sprintf("  t = %.4f\n", t_stat),
+    sprintf("  p (one-tailed, beta1 > 0) = %.4f\n", p_onetailed),
+    sprintf("  H17 supported: %s\n", beta1 > 0 && p_onetailed < 0.05))
 
 ```
 

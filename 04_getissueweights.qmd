@@ -139,14 +139,14 @@ linear_kernel <- function(x, a, b) {
   a + b * x
 }
 
-exp_kernel <- function(x, b, c) {
-  1 - exp(-b * (x ^ c))
+exp_kernel <- function(x, a, b) {
+  1 - exp(-b * (x ^ a))
 }
 
 # -------------------------------------------------------
 # Loss function (SSE) — generic
 # -------------------------------------------------------
-make_loss <- function(deltas, pixel_dist, kernel = c("linear", "exponential")) {
+make_loss <- function(deltas, pixel_dist, lambda, kernel = c("linear", "exponential")) {
   kernel <- match.arg(kernel)
   
   function(params) {
@@ -155,95 +155,159 @@ make_loss <- function(deltas, pixel_dist, kernel = c("linear", "exponential")) {
     #   exponential: alpha[1:6], a, b        (8 params)
     alpha  <- params[1:n_issues]
     g      <- weighted_l1(deltas, alpha)
+    a <- params[n_issues + 1]  # intercept or exponent
+    b <- params[n_issues + 2]  # slope/scaling of opinion difference
     
-    if (kernel == "linear") {
-      a <- params[n_issues + 1]
-      b <- params[n_issues + 2]
+    if (kernel == "linear") {  
       pred <- linear_kernel(g, a, b)
     } else {
-      b <- params[n_issues + 1]
-      c <- params[n_issues + 2]
-      pred <- exp_kernel(g, b, c)
+      pred <- exp_kernel(g, a, b)
     }
     
-    sum((pixel_dist - pred)^2)
+    sse <- sum((pixel_dist - pred)^2)
+    entropy_penalty <- -lambda * sum(log(alpha + 1e-6))  # pulls weights from zero
+    sse + entropy_penalty
   }
 }
+
+compute_diagnostics <- function(mat) {
+  # VIF per column
+  vifs <- setNames(numeric(ncol(mat)), colnames(mat))
+  for (j in seq_len(ncol(mat))) {
+    y <- mat[, j]
+    X <- mat[, -j, drop = FALSE]
+    if (nrow(X) <= ncol(X)) {
+      vifs[j] <- NA_real_
+    } else {
+      r2 <- summary(lm(y ~ X))$r.squared
+      vifs[j] <- 1 / (1 - r2)
+    }
+  }
+
+  # Drop zero-variance columns before SVD
+  col_sd <- apply(mat, 2, sd)
+  mat_ok <- mat[, col_sd > 0, drop = FALSE]
+
+  if (ncol(mat_ok) < 2) {
+    # Can't compute a meaningful condition number with < 2 varying columns
+    cond_number <- NA_real_
+  } else {
+    sv <- svd(scale(mat_ok))$d
+    # Guard against near-zero singular values (numerical zero)
+    min_sv <- min(sv[sv > .Machine$double.eps * max(sv)])
+    cond_number <- max(sv) / min_sv
+  }
+
+  list(vif = vifs, condition_number = cond_number)
+}
+
 print("functions check")
 ```
 
 ```{r}
 
-# -------------------------------------------------------
-# Fit one participant
-# -------------------------------------------------------
-fit_participant <- function(df_p, kernel = c("linear", "exponential")) {
-  
+fit_participant <- function(df_p, kernel = c("linear", "exponential"), 
+                            n_starts = 10, lambda = 0.0) {
   kernel <- match.arg(kernel)
 
-  # missing values all already removed
   deltas     <- as.matrix(df_p[, delta_cols])
   pixel_dist <- df_p$pixel_dist
+  loss       <- make_loss(deltas, pixel_dist, kernel, lambda = lambda)
+  
+  vif_vals <- compute_diagnostics(deltas)
 
-  loss <- make_loss(deltas, pixel_dist, kernel)
+  # if (kernel == "linear") {
+  #   lb <- c(rep(0, n_issues), 0,    0)
+  #   ub <- c(rep(1, n_issues), 1,    5)
+  # } else {
+  #   lb <- c(rep(0, n_issues), 1e-3, 1e-3)
+  #   ub <- c(rep(1, n_issues), 50,   10)
+  # }
   
-  # --- starting values & bounds ---
-  # alpha: start equal, bounded (0, 1)
-  alpha0 <- rep(1 / n_issues, n_issues)
+  # heq <- function(params) sum(params[1:n_issues]) - 1
   
-  if (kernel == "linear") {
-    # params: alpha[1:6], a (intercept >= 0), b (slope >= 0)
-    x0  <- c(alpha0, 0, 1)
-    lb  <- c(rep(0, n_issues), 0,    0)
-    ub  <- c(rep(1, n_issues), 1,    5)
-  } else {
-    # params: alpha[1:6], b (reach > 0), c (sharpness > 0)
-    x0  <- c(alpha0, 1, 1)
-    lb  <- c(rep(0, n_issues), 1e-3, 1e-3)
-    ub  <- c(rep(1, n_issues), 50,   10)
-  }
+  # # --- run n_starts optimizations, keep best ---
+  # best_fit    <- NULL
+  # best_obj    <- Inf
   
-  # Equality constraint: sum(alpha) == 1  →  sum(alpha) - 1 == 0
-  heq <- function(params) sum(params[1:n_issues]) - 1
+  # for (i in seq_len(n_starts)) {
+    
+  #   # first start uses your original equal-weight x0, rest are random
+  #   if (i == 1) {
+  #     alpha0 <- rep(1 / n_issues, n_issues)
+  #     if (kernel == "linear") {
+  #       x0 <- c(alpha0, 0, 1)
+  #     } else {
+  #       x0 <- c(alpha0, 1, 4)
+  #     }
+  #   } else {
+  #     raw    <- runif(n_issues)
+  #     alpha0 <- raw / sum(raw)
+  #     if (kernel == "linear") {
+  #       x0 <- c(alpha0, runif(1, 0, 0.5), runif(1, 0.5, 2))
+  #     } else {
+  #       x0 <- c(alpha0, runif(1, 1, 10), runif(1, 0.5, 3))
+  #     }
+  #   }
+    
+  #   fit <- tryCatch(
+  #     nloptr(
+  #       x0          = x0,
+  #       eval_f      = loss,
+  #       lb          = lb,
+  #       ub          = ub,
+  #       eval_g_eq   = heq,
+  #       opts        = list(
+  #         algorithm = "NLOPT_LN_COBYLA",
+  #         xtol_rel  = 1e-6,
+  #         maxeval   = 10000
+  #       )
+  #     ),
+  #     error = function(e) NULL
+  #   )
+    
+  #   if (!is.null(fit) && fit$status > 0 && fit$objective < best_obj) {
+  #     best_fit <- fit
+  #     best_obj <- fit$objective
+  #   }
+  # }
   
-  fit <- nloptr(
-    x0          = x0,
-    eval_f      = loss,
-    lb          = lb,
-    ub          = ub,
-    eval_g_eq   = heq,
-    opts        = list(
-      algorithm  = "NLOPT_LN_COBYLA",   # derivative-free, handles eq constraints
-      xtol_rel   = 1e-6,
-      maxeval    = 10000
-    )
-  )
+  # # --- same result formatting as before ---
+  # params     <- best_fit$solution
+  # alpha_norm <- params[1:n_issues]
   
-  params <- fit$solution
-  alpha_norm <- params[1:n_issues] #/ sum(params[1:n_issues])
+  # result <- tibble(
+  #   issue      = delta_cols,
+  #   alpha      = alpha_norm,
+  #   vif        = vif_vals,
+  #   kernel     = kernel,
+  #   converged  = (best_fit$status > 0),
+  #   sse        = best_fit$objective
+  # )
   
+  # if (kernel == "linear") {
+  #   result$param1      <- params[n_issues + 1]
+  #   result$param2      <- params[n_issues + 2]
+  #   result$param1_name <- "linearKernel_param1"
+  #   result$param2_name <- "linearKernel_param2"
+  # } else {
+  #   result$param1      <- params[n_issues + 1]
+  #   result$param2      <- params[n_issues + 2]
+  #   result$param1_name <- "expKernel_param1"
+  #   result$param2_name <- "expKernel_param2"
+  # }
+  
+  # result
+
   result <- tibble(
-    # id    = df_p$id[1],
-    # wave  = df_p$wave[1],
-    issue = delta_cols,
-    alpha = alpha_norm,
-    kernel = kernel,
-    converged = (fit$status > 0),
-    sse   = fit$objective
+    issue      = delta_cols,
+    # alpha      = alpha_norm,
+    vif        = vif_vals$vif,
+    condition_number = vif_vals$condition_number,
+    # kernel     = kernel,
+    # converged  = (best_fit$status > 0),
+    # sse        = best_fit$objective
   )
-  
-  if (kernel == "linear") {
-    result$param1 <- params[n_issues + 1]   # a (min distance)
-    result$param2 <- params[n_issues + 2]   # b (rate)
-    result$param1_name <- "linearKernel_param1"
-    result$param2_name <- "linearKernel_param2"
-  } else {
-    result$param1 <- params[n_issues + 1]   # b (reach)
-    result$param2 <- params[n_issues + 2]   # c (sharpness)
-    result$param1_name <- "expKernel_param1"
-    result$param2_name <- "expKernel_param2"
-  }
-  
   result
 }
 print("function fit one participant check")
@@ -254,13 +318,14 @@ print("function fit one participant check")
 # -------------------------------------------------------
 # Run for all participants × both kernels
 # -------------------------------------------------------
+set.seed(2)
 results <- df_diff %>%
   group_by(id, wave) %>%
   group_modify(~ {
 
     res <- bind_rows(
-      fit_participant(.x, kernel = "linear"),
-      fit_participant(.x, kernel = "exponential")
+      fit_participant(.x, kernel = "linear", lambda=0.0, n_starts = 1),
+      fit_participant(.x, kernel = "exponential", lambda=0.0, n_starts = 1)
     )
 
     res
@@ -270,6 +335,20 @@ results <- df_diff %>%
 print(" ... fitting done.")
 ```
 
+Analyse VIF:
+```{r}
+vif_summary <- results %>%
+  group_by(id, wave) %>%
+  summarise(
+    max_vif  = max(vif, na.rm = TRUE),
+    mean_vif = mean(vif, na.rm = TRUE),
+    any_high = any(vif > 10, na.rm = TRUE),  # common threshold
+    .groups  = "drop"
+  )
+```
+
+
+Collect alphas:
 ```{r}
 # -------------------------------------------------------
 # Wide format: one row per participant × kernel
@@ -478,5 +557,137 @@ ggplot(pred_df,
 
   theme_minimal()
 
+
+```
+
+
+
+# Analyse initial-condition dependence of weights
+
+```{r}
+# -------------------------------------------------------
+# Multi-start fit for one participant
+# -------------------------------------------------------
+fit_participant_multistart <- function(df_p, kernel = c("linear", "exponential"), 
+                                       n_starts = 50, lambda = 0) {
+  kernel <- match.arg(kernel)
+  
+  deltas     <- as.matrix(df_p[, delta_cols])
+  pixel_dist <- df_p$pixel_dist
+  loss       <- make_loss(deltas, pixel_dist, kernel, lambda = lambda)
+  
+  if (kernel == "linear") {
+    lb <- c(rep(0, n_issues), 0,    0)
+    ub <- c(rep(1, n_issues), 1,    5)
+  } else {
+    lb <- c(rep(0, n_issues), 1e-3, 1e-3)
+    ub <- c(rep(1, n_issues), 50,   10)
+  }
+  
+  heq <- function(params) sum(params[1:n_issues]) - 1
+  
+  # --- run n_starts optimizations from random starting points ---
+  runs <- map(seq_len(n_starts), function(i) {
+    
+    # random alpha0 on the simplex
+    raw    <- runif(n_issues)
+    alpha0 <- raw / sum(raw)
+    
+    if (kernel == "linear") {
+      x0 <- c(alpha0, runif(1, 0, 0.5), runif(1, 0.5, 2))
+    } else {
+      x0 <- c(alpha0, runif(1, 1, 10), runif(1, 0.5, 3))
+    }
+    
+    fit <- tryCatch(
+      nloptr(
+        x0          = x0,
+        eval_f      = loss,
+        lb          = lb,
+        ub          = ub,
+        eval_g_eq   = heq,
+        opts        = list(
+          algorithm = "NLOPT_LN_COBYLA",
+          xtol_rel  = 1e-6,
+          maxeval   = 10000
+        )
+      ),
+      error = function(e) NULL
+    )
+    
+    if (is.null(fit) || fit$status <= 0) return(NULL)
+    
+    params <- fit$solution
+    tibble(
+      start       = i,
+      issue       = delta_cols,
+      alpha       = params[1:n_issues],
+      param1      = params[n_issues + 1],
+      param2      = params[n_issues + 2],
+      sse         = fit$objective,
+      converged   = fit$status > 0
+    )
+  }) %>% 
+    compact() %>%   # drop NULLs
+    bind_rows()
+  
+  runs
+}
+
+# -------------------------------------------------------
+# Summarise variance across starts for one participant
+# -------------------------------------------------------
+summarise_multistart <- function(runs) {
+  runs %>%
+    group_by(issue) %>%
+    summarise(
+      alpha_mean   = mean(alpha),
+      alpha_sd     = sd(alpha),
+      alpha_min    = min(alpha),
+      alpha_max    = max(alpha),
+      alpha_median = median(alpha),
+      n_zero       = sum(alpha < 0.01),   # near-zero count
+      n_starts     = n(),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      is_unstable = alpha_sd > 0.1   # flag high-variance issues
+    )
+}
+
+# -------------------------------------------------------
+# Run on a single participant to inspect
+# -------------------------------------------------------
+test_id   <- 330183866219536   # replace with your participant
+test_wave <- 1
+
+runs_test <- df_diff %>%
+  filter(id == test_id, wave == test_wave) %>%
+  fit_participant_multistart(kernel = "linear", n_starts = 50, lambda = 0.1)
+
+# summary table
+summarise_multistart(runs_test)
+
+# alpha distribution per issue across starts
+runs_test %>%
+  mutate(issue = factor(issue, levels = delta_cols)) %>%
+  ggplot(aes(x = alpha)) +
+  geom_histogram(bins = 20) +
+  facet_wrap(~issue) +
+  labs(title = paste("Alpha distributions across starts | id", test_id),
+       x = "alpha", y = "count")
+
+```
+```{r}
+# sse distribution — are there multiple basins?
+runs_test %>%
+  distinct(start, sse) %>%
+  ggplot(aes(x = sse)) +
+  geom_histogram(bins = 30) +
+  labs(title = "SSE across starts", x = "SSE", y = "count")
+```
+
+
+```{r}
 
 ```

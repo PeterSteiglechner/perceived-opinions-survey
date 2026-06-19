@@ -15,6 +15,26 @@ qs_keys = [
     "digital regulation",
     "east germany",
 ]
+
+
+labelMap = {
+    "climate_concern": "climate concern",
+    "gay_marriage": "gay marriage",
+    "rights_indep_integration": "migrant rights",
+    "econ_inequality": "economic inequality",
+    "regulate_internet": "digital regulation", 
+    "east_germans": "East German recognition",
+}
+labelMap_nl = {
+    "climate_concern": "climate\nconcern",
+    "gay_marriage": "gay\nmarriage",
+    "rights_indep_integration": "migrant\nrights",
+    "econ_inequality": "economic\ninequality",
+    "regulate_internet": "digital\nregulation", 
+    "east_germans": "East German\nrecognition",
+}
+
+
 parties = ["Left Party", "BSW", "Green Party", "SPD", "FDP", "CDU/CSU", "AfD"]
 parties_full = parties + ["No party", "Other party", "Refuse to say/No answer"]
 
@@ -78,3 +98,17 @@ VOTING_PREF_MAP = {
 }
 
 CATEGORY_ORDER = list(VOTING_PREF_MAP.keys())
+
+
+colorsOrig = [
+    (
+        party_cmap["contact"]
+        if "reference" in p
+        else (
+            party_cmap[p[5:].replace(" ", "")]
+            if "voter" in p
+            else party_cmap[p.replace(" ", "")]
+        )
+    )
+    for p in peeps
+]

@@ -100,6 +100,7 @@ for q, qq in zip(questions_sc, qs):
         get_opinionStd_social_circle, args=(q,), axis=1
     )
 
+
 for q, qq in zip(questions_sc, qs):
     resdf[f"x_{'self'}_{q}"] = (df[f"player.own2__{q}"]) / MAX_OPINIONSLIDER
     resdf[f"first_x_{'self'}_{q}"] = (df[f"player.own__{q}"]) / MAX_OPINIONSLIDER

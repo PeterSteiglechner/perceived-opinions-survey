@@ -306,7 +306,7 @@ display(df_p[vars].describe())
 fig, axs = plt.subplots(1,3, figsize=(16/2.54,6/2.54))
 for (var1, var2), ax in zip(combinations(vars,2), axs.flatten()):
     sns.regplot(df_p, x=var1, y=var2, ax=ax, scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
-
+fig.tight_layout()
 
 # %%
 vars = ["average_pixel_dist", "average_pixel_dist_parties"]
@@ -455,24 +455,31 @@ diff_cols = [f'deltaX_{q}' for q in questions_sc] + ['pixel_dist']
 sns.pairplot(df_diff.sample(500)[diff_cols], plot_kws={'size':0.1}, )
 
 # %%
-fig, axs = plt.subplots(2,2, figsize=(16/2.54, 10/2.54))
-sns.histplot(df_diff, x="pairwise_similarity", hue="wave", palette="Set1", hue_order=[2,1], ax=axs[0,0])
+fig, axs = plt.subplots(2,2, figsize=(16/2.54, 12/2.54))
+df_diff["dottype"] = df_diff.apply(lambda x: "personal" if (("reference" in x['dot1'] or "self" in x["dot1"]) and ("reference" in x['dot2'] or "self" in x["dot2"])) else "voter", axis=1)
 
-sns.histplot(df_diff, x="pixel_dist", hue="wave", palette="Set1", hue_order=[2,1], ax=axs[0,1])
+hue= "dottype"
+hue_order = ["voter", "personal"] #[2,1]
+mult = "stack"
+sns.histplot(df_diff, x="pairwise_similarity", hue=hue, palette="Set1", hue_order=hue_order, ax=axs[0,0], multiple=mult)
+
+sns.histplot(df_diff, x="pixel_dist", hue=hue, palette="Set1", hue_order=hue_order, ax=axs[0,1], multiple=mult)
 
 
-sns.histplot(df_diff, x="sympathy", hue="wave", palette="Set1", hue_order=[2,1], ax=axs[1,0])
+sns.histplot(df_diff, x="sympathy", hue=hue, palette="Set1", hue_order=hue_order, ax=axs[1,0], multiple=mult)
 
-sns.histplot(df_diff, x="socialCloseness", hue="wave", palette="Set1", hue_order=[2,1], ax=axs[1,1])
+sns.histplot(df_diff, x="socialCloseness", hue=hue, palette="Set1", hue_order=hue_order, ax=axs[1,1], multiple=mult)
 
 fig.tight_layout()
 
 # %%
+plt.figure()
 diff_cols = [f'deltaX_{q}' for q in questions_sc] + ['pixel_dist']
 mask = np.triu(np.ones_like(df_diff[diff_cols].corr()))
 sns.heatmap(df_diff[diff_cols].corr(), annot=True, cmap="hot_r", vmax=1, vmin=0, mask=mask, cbar_kws={'label':"correlation"})
 
 # %%
+plt.figure()
 print(f"Correlation between Sympathy and pixel distance of a voter: {df_diff[['sympathy']+['pixel_dist']].corr().iloc[0,1]}")
 sns.lmplot(df_diff, x="pixel_dist", y="sympathy", hue="party", hue_order=partiesVars, palette=party_cmap, order=1, scatter_kws={"s":1, "alpha":0.3 },  y_jitter=0.015 )
 plt.ylim(-0.05,1.05)
@@ -509,8 +516,15 @@ sns.histplot(df_diff, x="sympathy", hue="ingroupdummy", palette="Set2",)
 
 # %%
 
-plt.figure()
-print(f"Correlation between social Closeness and pixel distance: {df_diff[['socialCloseness']+['pixel_dist']].corr().iloc[0,1]}")
+plt.figure(figsize=(16/2.54,9/2.54))
+print(f"Correlation between pairwise similarity and pixel distance: {df_diff[['pairwise_similarity']+['pixel_dist']].corr().iloc[0,1]}")
+sns.lmplot(df_diff, x="pixel_dist", y="pairwise_similarity", hue="wave", scatter_kws={"s":1, "alpha":0.3 }, y_jitter=0.01)
+plt.ylim(-0.05,1.05)
+
+#%%
+
+plt.figure(figsize=(16/2.54,9/2.54))
+print(f"Correlation between social closeness and pixel distance: {df_diff[['socialCloseness']+['pixel_dist']].corr().iloc[0,1]}")
 df_diff["lr_cat"] =pd.cut(df_diff.lr, np.linspace(0, 1, 4), right=False, labels=["left", "moderate", "right"])
 sns.lmplot(df_diff, x="pixel_dist", y="socialCloseness", hue="lr_cat", scatter_kws={"s":1, "alpha":0.3 }, y_jitter=0.01)
 plt.ylim(-0.05,1.05)
@@ -532,14 +546,6 @@ sns.violinplot(df_diff.loc[(df_diff.wave==2) & (df_diff.dot2.isin(partiesVars)) 
 sns.stripplot(df_diff.loc[(df_diff.wave==2) & (df_diff.dot2.isin(partiesVars)) & (df_diff.dot1=="self")], x="treatment", y=f"deltaX_{q}",size=1,)
 
 # %%
-df_diff.loc[(df_diff.wave==2) & (df_diff.dot2.isin(partiesVars)) & (df_diff.dot1=="self")].groupby("treatment")[f"deltaX_{q}"].describe()
-
-# %%
-df_diff.loc[~df_diff.sympathy.isna()].groupby("treatment")["sympathy"].describe()
-
-# %%
-df_diff.loc[df_diff.wave==2, "id"].unique()
-
 # %%
 
 
