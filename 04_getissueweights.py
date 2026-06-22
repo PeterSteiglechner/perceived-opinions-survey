@@ -175,9 +175,9 @@ def fit_participant(df_p: pd.DataFrame,
     loss       = make_loss(deltas, pixel_dist, kernel=kernel, lam=lam)
     diag       = compute_diagnostics(deltas)
     if kernel == "linear":
-        bounds = [(0, 1)] * n_issues + [(-1000,1000), (-1000, 1000)]
+        bounds = [(0, 1)] * n_issues + [(-0.2,1), (0, 2)]
     else:
-        bounds = [(0, 1)] * n_issues + [(-1000, 1000), (-1000, 1000)]
+        bounds = [(0, 1)] * n_issues + [(0.1, 10), (0, 10)]
     constraints = [{"type": "eq", "fun": lambda p: p[:n_issues].sum() - 1}]
 
     all_results = []  # collect one DataFrame per valid start
@@ -206,7 +206,7 @@ def fit_participant(df_p: pd.DataFrame,
             )
             alpha_candidate = fit.x[:n_issues]
             alpha_sum_ok    = abs(alpha_candidate.sum() - 1) < 1e-3
-            alpha_valid     = np.all(alpha_candidate >= -1e-6)
+            alpha_valid     = np.all(alpha_candidate >= 0)
 
             if alpha_sum_ok and alpha_valid:
                 params = fit.x
@@ -236,8 +236,8 @@ def fit_participant(df_p: pd.DataFrame,
         # Fallback
         print("WARNING: all starts failed — returning equal-weight fallback")
         params = np.concatenate([
-            np.full(n_issues, 1 / n_issues),
-            [0.0, 1.0] if kernel == "linear" else [1.0, 4.0]
+            [np.nan] * n_issues, #np.full(n_issues, 1 / n_issues),
+            [np.nan, np.nan] #if kernel == "linear" else [1.0, 4.0]
         ])
         df_fallback = pd.DataFrame({
             "issue":            delta_cols,
@@ -271,7 +271,7 @@ np.random.seed(2)
 records = []
 for (pid, wave), group in df_diff.groupby(["id", "wave"]):
     for kernel in ["linear", "exp"]:
-        res = fit_participant(group, kernel=kernel, lam=0.0, n_starts=50)
+        res = fit_participant(group, kernel=kernel, lam=0.0, n_starts=10)
         res["id"]   = pid
         res["wave"] = wave
         records.append(res)
@@ -281,7 +281,9 @@ print("... fitting done.")
 
 
 
-
+#%%
+# store results
+results.to_csv("processed_data/fits_allweights_vif_10starts.csv")
 # %% Analyse VIF
 
 vif_summary = (
@@ -302,9 +304,9 @@ resultsV = results.merge(valid_ids, on=["wave", "id"], how="left")
 (vif_summary.max_vif<10).value_counts()
 
 #%%
-sns.boxplot(resultsV.loc[resultsV.valid & resultsV.is_best], x="issue", y="alpha", hue="wave", palette="Set1", fliersize=0, saturation=0.1)
+sns.boxplot(resultsV.loc[resultsV.valid & resultsV.is_best], x="issue", y="alpha", hue="wave", palette="Set1", fliersize=0, saturation=1)
 # sns.barplot(resultsV.loc[resultsV.is_best & resultsV.valid ], x="issue", y="alpha", hue="wave", alpha=0.1, palette="Set1")
-sns.stripplot(resultsV.loc[resultsV.valid & resultsV.is_best], x="issue", y="alpha", hue="wave", marker=".", size=1, dodge=True, palette="Set1")
+sns.stripplot(resultsV.loc[resultsV.valid & resultsV.is_best], x="issue", y="alpha", hue="wave", marker="o", size=1, dodge=True, palette="Set1", edgecolor="w", linewidth=0.05)
 sns.stripplot(resultsV.loc[resultsV.valid & resultsV.is_best].groupby("issue")["alpha"].mean().reset_index(), x="issue", y="alpha", marker="s", size=10, palette="Set1")
 
 plt.ylim(-0.02, 0.4)
@@ -487,111 +489,69 @@ def predict_distances(df_p: pd.DataFrame, fit_row: pd.Series) -> pd.DataFrame:
 
 
 # %% # Analyse initial-condition dependence of weights
+examples = results.loc[results.vif<5, ["id", "wave", "param1_name"]].sample(10)
+x = np.linspace(0,1)
+id, wave, kernel = (331246904848564, 1, "linearKernel_param1") #examples.iloc[0]
+kernel2 = ("expKernel_param1" if "linear" in kernel else "linearKernel_param1") 
+example = results.loc[(results["id"]==id) & (results["wave"]==wave) & (results["param1_name"] == kernel)]
+for i in range(50):
+    a,b = example.loc[example.i_start==i, ["param1", "param2"]].iloc[0]
+    print(a,b)
+    plt.plot(x, linear_kernel(x, a,b) if "linear" in kernel else exp_kernel(x, a, b))
 
-def fit_participant_multistart(df_p: pd.DataFrame,
-                                kernel: str = "linear",
-                                n_starts: int = 50,
-                                lam: float = 0.0) -> pd.DataFrame:
-    deltas     = df_p[delta_cols].to_numpy(dtype=float)
-    pixel_dist = df_p["pixel_dist"].to_numpy(dtype=float)
-    loss       = make_loss(deltas, pixel_dist, kernel=kernel, lam=lam)
 
-    if kernel == "linear":
-        bounds = [(0, 1)] * n_issues + [(0, 1), (0, 5)]
-    else:
-        bounds = [(0, 1)] * n_issues + [(1e-3, 50), (1e-3, 10)]
+exampleFull = results.loc[(results["id"]==id) & (results["wave"]==wave) & (results["param1_name"].isin([kernel, kernel2]))]
 
-    constraints = [{"type": "eq", "fun": lambda p: p[:n_issues].sum() - 1}]
+fig = plt.figure()
+sns.barplot(exampleFull, x="issue", y="alpha", hue="kernel")
+sns.swarmplot(exampleFull, x="issue", y="alpha", size=3, hue="kernel")
+fig.autofmt_xdate()
 
-    records = []
-    for i in range(n_starts):
-        raw    = np.random.rand(n_issues)
-        alpha0 = raw / raw.sum()
 
-        if kernel == "linear":
-            x0 = np.concatenate([alpha0, [np.random.uniform(0, 0.5),
-                                           np.random.uniform(0.5, 2)]])
-        else:
-            x0 = np.concatenate([alpha0, [np.random.uniform(1, 10),
-                                           np.random.uniform(0.5, 3)]])
-        try:
-            fit = minimize(
-                loss, x0,
-                method      = "SLSQP",
-                bounds      = bounds,
-                constraints = constraints,
-                options     = {"ftol": 1e-9, "maxiter": 10_000}
-            )
-        except Exception:
+# %%
+# Pick a few participants
+sample_ids = df_diff["id"].unique()[:5]
+
+fig, axes = plt.subplots(len(sample_ids), 2, figsize=(10, 3 * len(sample_ids)))
+
+for i, pid in enumerate(sample_ids):
+    for j, wave in enumerate([1, 2]):
+        ax = axes[i, j]
+        grp = df_diff.loc[(df_diff["id"] == pid) & (df_diff["wave"] == wave)]
+        if grp.empty:
+            ax.set_visible(False)
             continue
 
-        if not fit.success:
+        deltas     = grp[delta_cols].to_numpy(dtype=float)
+        pixel_dist = grp["pixel_dist"].to_numpy(dtype=float)
+
+        fitted_row = results.loc[
+            (results["id"] == pid) & (results["wave"] == wave) &
+            (results["kernel"] == "exp") & results["is_best"]
+        ]
+        if fitted_row.empty:
+            ax.set_visible(False)
             continue
 
-        params = fit.x
-        for j, col in enumerate(delta_cols):
-            records.append({
-                "start":     i + 1,
-                "issue":     col,
-                "alpha":     params[j],
-                "param1":    params[n_issues],
-                "param2":    params[n_issues + 1],
-                "sse":       fit.fun,
-                "converged": fit.success,
-            })
+        alpha_fit  = fitted_row.set_index("issue")["alpha"].reindex(delta_cols).to_numpy()
+        p1         = fitted_row["param1"].iloc[0]
+        p2         = fitted_row["param2"].iloc[0]
 
-    return pd.DataFrame(records)
+        # Equal weights baseline
+        equal_alpha = np.full(n_issues, 1 / n_issues)
+        pred_equal  = exp_kernel(weighted_l1(deltas, equal_alpha), p1, p2)
+        pred_fit    = exp_kernel(weighted_l1(deltas, alpha_fit),   p1, p2)
 
+        ax.scatter(pred_equal, pixel_dist, label="equal α",  alpha=0.6, s=20)
+        ax.scatter(pred_fit,   pixel_dist, label="fitted α", alpha=0.6, s=20, marker="x")
+        ax.plot([0,1],[0,1], "k--", lw=1)  # identity line
 
-def summarise_multistart(runs: pd.DataFrame) -> pd.DataFrame:
-    return (
-        runs
-        .groupby("issue")
-        .agg(
-            alpha_mean   =("alpha", "mean"),
-            alpha_sd     =("alpha", "std"),
-            alpha_min    =("alpha", "min"),
-            alpha_max    =("alpha", "max"),
-            alpha_median =("alpha", "median"),
-            n_zero       =("alpha", lambda x: (x < 0.01).sum()),
-            n_starts     =("alpha", "count"),
-        )
-        .assign(is_unstable=lambda d: d["alpha_sd"] > 0.1)
-        .reset_index()
-    )
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+        ax.set_xlabel("predicted pixel_dist")
+        ax.set_ylabel("actual pixel_dist")
+        ax.set_title(f"id={pid}, wave={wave}")
+        ax.legend(fontsize=7)
 
-
-# Run on a single participant
-test_id   = 330183866219536
-test_wave = 1
-
-runs_test = fit_participant_multistart(
-    df_diff.query("id == @test_id and wave == @test_wave"),
-    kernel   = "linear",
-    n_starts = 50,
-    lam      = 0.1
-)
-
-print(summarise_multistart(runs_test))
-
-# Alpha distributions per issue
-g = sns.FacetGrid(
-    runs_test.assign(issue=pd.Categorical(runs_test["issue"], categories=delta_cols)),
-    col="issue", col_wrap=3, height=3
-)
-g.map(plt.hist, "alpha", bins=20)
-g.set_axis_labels("alpha", "count")
-g.figure.suptitle(f"Alpha distributions across starts | id {test_id}", y=1.02)
 plt.tight_layout()
 plt.show()
-
-# SSE distribution — are there multiple basins?
-sse_df = runs_test.drop_duplicates("start")[["start", "sse"]]
-
-plt.figure(figsize=(6, 4))
-plt.hist(sse_df["sse"], bins=30)
-plt.xlabel("SSE")
-plt.ylabel("count")
-plt.title("SSE across starts")
-plt.tight_layout()
-plt.show()
+# %%
