@@ -284,6 +284,8 @@ print("... fitting done.")
 #%%
 # store results
 results.to_csv("processed_data/fits_allweights_vif_10starts.csv")
+#%%
+results = pd.read_csv("processed_data/fits_allweights_vif_50starts.csv")
 # %% Analyse VIF
 
 vif_summary = (
@@ -297,11 +299,13 @@ vif_summary = (
     .reset_index()
 )
 
+
 valid_ids = vif_summary.loc[vif_summary.max_vif<10, ["wave", "id"]]
 valid_ids["valid"] = True
 print(vif_summary.head())
 resultsV = results.merge(valid_ids, on=["wave", "id"], how="left")
 (vif_summary.max_vif<10).value_counts()
+
 
 #%%
 sns.boxplot(resultsV.loc[resultsV.valid & resultsV.is_best], x="issue", y="alpha", hue="wave", palette="Set1", fliersize=0, saturation=1)
@@ -401,9 +405,14 @@ df_p2 = df_p2.merge(corrP_by_group, on=["id", "wave"], how="left")
 df_p2["sumCorrPAlpha"] = df_p2[[f"corrP_alpha_{q}" for q in questions_sc]].sum(axis=1).copy()
 
 
+vif_qs = results.loc[(results.kernel=="linear") & (results.is_best)].pivot_table(columns="issue", index=["id", "wave"], values="vif").rename(columns=dict(zip(delta_cols,[f"vif_{q}" for q in questions_sc]))).reset_index()
+cond_qs = results.loc[(results.kernel=="linear") & (results.is_best)].pivot_table(columns="issue", index=["id", "wave"], values="condition_number").rename(columns=dict(zip(delta_cols,[f"condNr_{q}" for q in questions_sc]))).reset_index()
+df_p3 = df_p2.merge(vif_qs, on = ["id", "wave"])
+df_p3 = df_p3.merge(cond_qs, on = ["id", "wave"])
+
 
 #%%
-df_p2.to_csv(
+df_p3.to_csv(
     "processed_data/2026-06-19_data_processed_participant_withAllIssueWeights.csv",
     index=False)
 df_diff2.to_csv(

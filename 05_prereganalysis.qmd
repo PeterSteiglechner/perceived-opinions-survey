@@ -1,7 +1,7 @@
 ---
-title: "prereg analysis"
+title: "Opinion Perception Survey Analysis (preregistration)"
 author: "Peter Steiglechner"
-date: "19.05.2026"
+date: "19.06.2026"
 engine: knitr
 knitr:
   opts_chunk:
@@ -12,7 +12,24 @@ format:
     code-fold: true
     tidy: true
     collapse: false
+    theme: cosmo
+    css: styles.css
+  pdf:
+    documentclass: article
+    toc: true
+    number-sections: true
+    colorlinks: true
+    geometry:
+      - top=2mm
+      - left=2mm
+      - right=2mm
+      - bottom=2mm
 ---
+
+```{=latex}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\newcommand{\smallpmatrix}[1]{\left(\begin{smallmatrix}#1\end{smallmatrix}\right)}
+```
 
 ```{r}
 #| label: imports
@@ -45,7 +62,6 @@ invisible(lapply(pkgs, load_or_install))
 options(vsc.viewer = TRUE)
 ```
 
-# Hypotheses and analysis plan
 \section{Hypotheses and analysis plan}
 
 All hypotheses concerning a single slope parameter (e.g., H1 to H3) are tested using a t-test at significance level $\alpha = 0.05$. Hypotheses involving multiple parameters are tested using a single F-test on their joint significance, also at $\alpha = 0.05$. All subsequent hypotheses follow this convention without further repetition.
@@ -118,7 +134,8 @@ df_diff <- read.csv("processed_data/2026-06-19_data_processed_differences_withAl
 # Hypotheses
 
 
-## \subsection*{Aim 1: Compare approaches to measuring perceived political differences}
+## Aim 1 
+\subsection*{Aim 1: Compare approaches to measuring perceived political differences}
 
 ### H1 
 \paragraph{H1. Participants place the typical voter of the party they affiliate with nearer to themselves than other typical voters.}
@@ -126,7 +143,7 @@ df_diff <- read.csv("processed_data/2026-06-19_data_processed_differences_withAl
 We model the distance between the dots representing the participant ($\mathrm{self}$) and the typical voter of each party $r$ as
 \begin{equation}
     d_{n,\text{self},r}
-    = \beta_0 + \beta_1 \,\mathbb{I}\bigl(r = {\rm party}_n\bigr) + u_n + \epsilon_{n,r},
+    = \beta_0 + \beta_1 \,\mathbb{I}\bigl(r = {party}_n\bigr) + u_n + \epsilon_{n,r},
 \end{equation}
 where $\mathbb{I}(\cdot)$ is an indicator function, $u_n$ is a participant level random intercept, and $\epsilon_{n,r}$ is an error term.
 
@@ -260,12 +277,12 @@ cat(sprintf("  Reject H0 (β₁ < 0): %s\n",   ifelse(p_one_sided < 0.05 & beta1
 ### H4
 \paragraph{H4. The closest pair on the map is rated most similar and the farthest pair is rated least similar} 
 
-Consider $(ij)^{\rm min}$ the pair of individuals $i$ and $j$ with the smallest distance on participant $n$'s political map and $(ij)^{\rm max}$ the pair with the largest distance on the map. The similarity difference between these two pairs 
+Consider $(ij)^{min}$ the pair of individuals $i$ and $j$ with the smallest distance on participant $n$'s political map and $(ij)^{max}$ the pair with the largest distance on the map. The similarity difference between these two pairs 
 \begin{equation}
-    \Delta s_{\rm max} = s_{n,(ij)^{\rm min}} - s_{n,(ij)^{\rm max}}  \ .
+    \Delta s_{max} = s_{n,(ij)^{min}} - s_{n,(ij)^{max}}  \ .
 \end{equation}
 
-The prediction is $\Delta s_{\rm max} > 0$ (standard t-test with $\alpha=0.05$).
+The prediction is $\Delta s_{max} > 0$ (standard t-test with $\alpha=0.05$).
 The closest pair on the map receives a higher similarity rating than the farthest pair.
 
 ```{r}
@@ -384,10 +401,10 @@ cat(sprintf("  H5 supported: %s\n",                   ifelse(supported, "YES ✓
 ```
 
 
-## AIM 2
+## Aim 2
 \subsection*{Aim 2: Identify patterns linked to (political) identity} 
 
-In this section, we hypothesise that demographic and identity-related variables, including party preference, ${\rm party}_n$, left-right placement, ${\rm lr}_n$, age, ${\rm age}_n$, or combinations of them moderate the relationship between belief differences and issue weights.
+In this section, we hypothesise that demographic and identity-related variables, including party preference, ${party}_n$, left-right placement, ${lr}_n$, age, ${age}_n$, or combinations of them moderate the relationship between belief differences and issue weights.
 
 ### H6
 
@@ -406,7 +423,7 @@ Participants affiliated with different parties differ in how strongly they weigh
 
 For correlations (unconstrained):
 ```{r}
-#| label: H6-combined
+#| label: H6-combined correlation
 k          <- "corrS"   # ONLY FOR CORRELATIONS
 alpha_cols <- paste0(k, "_alpha_", questions_sc)
 
@@ -487,6 +504,7 @@ if (wt$`Pr(>Chisq)`[2] < .05) {
 
 For exponential/linear weights, the weights are constrained. So there can not be any random effects on the intercept! 
 ```{r}
+#| label: H6-combined weights
 k          <- "exp"
 alpha_cols <- paste0(k, "_alpha_", questions_sc)
 
@@ -566,7 +584,7 @@ if (p_val < .05) {
 
 #### Interpretation 2: For each issue, does party matter?
 ```{r}
-#| label: H6-separate
+#| label: H6-separate correlation
 #| 
 k         <- "corrS"
 alpha_cols <- paste0(k, "_alpha_", questions_sc)
@@ -643,6 +661,8 @@ for (i in seq_along(questions_sc)) {
 
 And for exponential/linear weights (constrained):
 ```{r}
+#| label: H6-separate weights
+#| 
 k         <- "exp"
 alpha_cols <- paste0(k, "_alpha_", questions_sc)
 cat("  H6 | Interpretation 2: Party effects per issue (Waves 1–2)\n")
@@ -723,7 +743,7 @@ for (i in seq_along(questions_sc)) {
 
 We model the issue weights for each issue $q$ as
 \begin{equation}
-    \alpha_{n,q} = 1/6 + \beta_{q}  \cdot {\rm lr}_n  + u_q + \epsilon_{n,q} 
+    \alpha_{n,q} = 1/6 + \beta_{q}  \cdot {lr}_n  + u_q + \epsilon_{n,q} 
 \end{equation}
 with continuous variable $\mathrm{lr}_n$ between `left' ($-5$) and `right' ($5$).
 We estimate this model jointly across all six issues. 
@@ -802,7 +822,7 @@ anova(m_null, m_full)
 \paragraph{H8. Age predicts issue weights.} 
 We model the issue weights for each issue $q$ as
 \begin{equation}
-    \alpha_{n,q} = 1/6 + \beta_q  \cdot {\rm age}_n + u_q + \epsilon_{n,q}
+    \alpha_{n,q} = 1/6 + \beta_q  \cdot {age}_n + u_q + \epsilon_{n,q}
 \end{equation}
 
 The prediction is $\beta_q\neq 0$. Older and younger participants differ in how strongly they weigh different political issues when mapping individuals. 
@@ -879,7 +899,8 @@ anova(m_null, m_full)
 print(" exploration later ")
 ```
 
-## \subsection*{Aim 3: Assess the role of social circle belief variation}
+## Aim 3
+\subsection*{Aim 3: Assess the role of social circle belief variation}
 
 For Aim 3, we test whether including social circle belief variation improves predictions for participants' issue weights (inferred from the map distances), their reported issue importance, likeability of voters, and polarisation perceptions. In addition, we explore how social circle belief improves predictions of the map distances between individuals. 
 
@@ -949,7 +970,7 @@ cat(sprintf(
 ```
 
 ```{r}
-#| label: plot h9 by question.
+#| label: H9 - plot by question.
 ggplot(df_h9, aes(x = var_sc, y = alpha)) +
       geom_point(alpha = 0.2, size = 0.4) +
       geom_smooth(method = "lm", se = TRUE, color = "steelblue") +
@@ -1056,6 +1077,7 @@ sprintf("Reject H0 at alpha=0.05:      %s\n", coef_row["Estimate"] < 0 & p_one <
 ```
 Plot by issue
 ```{r}
+#| label: H10 plot by issue
 
 df_h10 %>%
   ggplot(aes(x = var_sc, y = w, color=issue)) +
@@ -1109,12 +1131,14 @@ The prediction is $\beta_2>0$ and that equation \ref{eq:liking} improves the pre
 
 {\color{red} TODO: This hypothesis is kind of wrong. We have 1 avg_social_circle_std per person and 7 pixel_dist and sympathy for 7 parties. But the avg_social_circle_std is already included in the random intercept.
 \begin{equation} \label{eq:liking}
-    y_{n,r} = \beta_0 + \beta_1 \cdot d_{n,\mathrm{self}-r} + \beta_2 \cdot \sum_q \mathrm{var}_{n,q} \sout{+ v_n} + \epsilon_{n,r}
+    y_{n,r} = \beta_0 + \beta_1 \cdot d_{n,\mathrm{self}-r} + \beta_2 \cdot \sum_q \mathrm{var}_{n,q} {REMOVED (+ v_n)} + \epsilon_{n,r}
 \end{equation}
 }
 
 
 ```{r}
+#| label: H11-aggregate
+
 variance_type = "std"
 
 df_h2And11 <- df_diff %>%
@@ -1134,9 +1158,6 @@ df_h11 <- df_h2And11 %>%
     pixel_dist_z     = as.numeric(scale(pixel_dist)),
     avg_var_sc_z = as.numeric(scale(avg_var_sc))
   ) 
-```
-
-```{r}
 
 df_h11_agg <- df_h11 %>%
   group_by(id, avg_var_sc_z) %>%
@@ -1146,9 +1167,9 @@ model_h11_agg <- lm(mean_sympathy ~ avg_var_sc_z, data = df_h11_agg)
 summary(model_h11_agg)
 ```
 
-
+Now let's go to treating each party as separate data point (for one participant)
 ```{r}
-#| label: H11
+#| label: H11 
 
 model_ext <- lmer(
   sympathy ~ pixel_dist_z * avg_var_sc_z + (1 + pixel_dist_z | id),
@@ -1197,13 +1218,13 @@ cat(
   sprintf("  p two-sided             = %.6f\n", p_two),
   sprintf("  p one-sided (β₂ > 0)   = %.6f\n", p_one),
   sprintf("  Reject H0 (β₂ ≤ 0)     = %s\n",   p_one < 0.05 && beta2 > 0),
-  sprintf("  R² marginal    baseline / extended = %.4f / %.4f (Δ = %+.4f)\n",
+  sprintf("  R² marginal    baseline / extended = %.4f / %.4f (Delta = %+.4f)\n",
           r2m_base, r2m_ext, r2m_ext - r2m_base),
-  sprintf("  R² conditional baseline / extended = %.4f / %.4f (Δ = %+.4f)\n",
+  sprintf("  R² conditional baseline / extended = %.4f / %.4f (Delta = %+.4f)\n",
           r2c_base, r2c_ext, r2c_ext - r2c_base),
-  sprintf("  AIC baseline / extended = %.2f / %.2f (Δ = %+.2f)\n",
+  sprintf("  AIC baseline / extended = %.2f / %.2f (Delta = %+.2f)\n",
           AIC(model_base), AIC(model_ext), AIC(model_ext) - AIC(model_base)),
-  sprintf("  BIC baseline / extended = %.2f / %.2f (Δ = %+.2f)\n",
+  sprintf("  BIC baseline / extended = %.2f / %.2f (Delta = %+.2f)\n",
           BIC(model_base), BIC(model_ext), BIC(model_ext) - BIC(model_base))
 )
 ```
@@ -1215,7 +1236,7 @@ cat(
 
 We model perceived polarisation on issue $q$ as
 \begin{equation}
-    P_{n,q} = \beta_0 + \beta_q \cdot {\rm var}_{n,q} + u_n + \epsilon_{n,q}.
+    P_{n,q} = \beta_0 + \beta_q \cdot {var}_{n,q} + u_n + \epsilon_{n,q}.
 \end{equation}
 
 The prediction is $\beta_q < 0$. 
@@ -1271,7 +1292,7 @@ df_h12a %>%
 
 We model overall perceived polarisation as
 \begin{equation}
-    P_{n,tot} = \beta_0 + \beta_1 \cdot \sum_q {\rm var}_{n,q} + \epsilon_{n}.
+    P_{n,tot} = \beta_0 + \beta_1 \cdot \sum_q {var}_{n,q} + \epsilon_{n}.
 \end{equation}
 
 The prediction is $ \beta_1 < 0$. 
@@ -1329,6 +1350,8 @@ with fit parameters $\hat b_n$, and $\hat c_n$.
 The prediction is that this model (with $\hat\alpha_{n,q} = w_{n,q}$) outperforms (i) an unweighted model with $\hat\alpha_{n,q}=1/6$ and (ii) a population weight model with $\hat\alpha_{n,q} = 1/n \cdot \sum_n w_{n,q}$. We use R2, AIC, and BIC as model quality indicators.
 
 ```{r}
+#| label: H13 all predictions
+
 
 # weighted_l1 <- function(deltas, alpha) {
 #   as.vector(as.matrix(deltas) %*% as.numeric(alpha))
@@ -1376,7 +1399,7 @@ df_h13_base <- df_diff |>
   ) |>
   select(-ends_with(".drop"))  # remove the conflicting df_p columns
 
-# ── Extract matrices outside of mutate ───────────────────────────────────────
+# -- Extract matrices outside of mutate ---------------------------------------
 .d         <- as.matrix(df_h13_base[, col_deltas])
 .a_uniform <- matrix(1 / length(questions_sc), nrow = nrow(df_h13_base), ncol = length(questions_sc))
 .a_pop_exp <- matrix(alphas_population_exp,    nrow = nrow(df_h13_base), ncol = length(questions_sc), byrow = TRUE)
@@ -1389,7 +1412,7 @@ df_h13_base <- df_diff |>
   ifelse(w_sum == 0, 0, w / w_sum)
 }
 
-# ── Weighted sums ─────────────────────────────────────────────────────────────
+# -- Weighted sums -------------------------------------------------------------
 .x_uniform <- rowSums(.d * .a_uniform)
 .x_pop_exp <- rowSums(.d * .a_pop_exp)
 .x_pop_lin <- rowSums(.d * .a_pop_lin)
@@ -1397,7 +1420,7 @@ df_h13_base <- df_diff |>
 .x_fit_lin <- rowSums(.d * .a_fit_lin)
 .x_weights <- rowSums(.d * .a_weights)
 
-# ── Attach predictions ────────────────────────────────────────────────────────
+# -- Attach predictions --------------------------------------------------------
 df_h13 <- df_h13_base |>
   mutate(
     predicted_d_uniform_exp    = exp_kernel(   .x_uniform, exp_param1,    exp_param2),
@@ -1416,6 +1439,7 @@ pred_cols <- c(
   "predicted_d_uniform_exp",    "predicted_d_uniform_lin",
   "predicted_d_fit_linear",     "predicted_d_fit_exp"
 )
+err_cols <- str_replace(pred_cols, "predicted_d_", "err_")
 
 df_h13 <- df_h13 |>
   mutate(across(
@@ -1426,7 +1450,7 @@ df_h13 <- df_h13 |>
 df_h13 <- df_h13 |>
   rename_with(~ str_replace(.x, "err_predicted_d_", "err_"), starts_with("err_"))
 
-# ── Model comparison table ────────────────────────────────────────────────────
+# -- Model comparison table ----------------------------------------------------
 
 y        <- df_h13$pixel_dist
 n_obs    <- sum(!is.na(y))
@@ -1487,7 +1511,10 @@ print(comparison_tbl)
 
 ```
 
+#### Analysis 
 ```{r}
+#| label: H13 analysis 1 - plot per-participant r2
+
 # 1. Per-participant performance (main result)
 per_person_r2 <- df_h13 |>
   group_by(id) |>
@@ -1543,7 +1570,9 @@ ggplot(
 ```
 
 ```{r}
-# 2. Predicted vs observed (diagnostic)
+#| label: H13 analysis 2 - plot predicted over observed
+
+# 2. Predicted vs observed 
 df_plot <- df_h13 |>
   slice_sample(n = 10000)
 pred_long <- df_plot |>
@@ -1583,6 +1612,8 @@ ggplot(
 ```
 
 ```{r}
+#| label: H13 analysis 3 - plot errors
+
 # 3. Participant-level error distribution
 participant_mse <- df_h13 |>
   group_by(id) |>
@@ -1616,9 +1647,6 @@ ggplot(
 ```
 
 
-```{r}
-
-```
 
 \paragraph{Explorative Analyses.} 
 
@@ -1632,6 +1660,7 @@ First, a \textbf{simple lens} $\mathcal{S}_n$ is a $6$-dimensional vector that s
 Second, a \textbf{compression lens} $\mathcal{C}_n$ is a $6$-dimensional vector, which projects the belief difference vector onto a single dimension, e.g.~`liberal' vs.~`conservative', and scales the belief distance in the direction of this dimension. 
 Third, a \textbf{full lens} $\mathcal{F}_n$ is a $6\times 6$ matrix that transforms the belief distance vector into a subjective new space with the same number of dimensions but with rotated and scaled axes.
 Writing these lenses in terms of transformation matrices yields: 
+
 
 \begin{tabular}{cll}
     1 & simplified lens &  $g_n(|x_{n,i,q} - x_{n,j,q}|) =\norm{\smallpmatrix{\diagdown & \ & 0 \\ \ & \mathcal{S}_n & \ \\ 0 & \ & \diagdown} \circ \smallpmatrix{
@@ -1667,7 +1696,8 @@ The goal of this exploration is to investigate to what extent these (theoretical
 #| label: Aim3-Exploration
 ```
 
-## \subsection*{Aim 4: Test the effects of an intervention on social circle belief variation}
+## Aim 4
+\subsection*{Aim 4: Test the effects of an intervention on social circle belief variation}
 
 In wave 2, participants are randomly put in (i) a control condition, where they receive the same instruction as in wave 1, namely to choose seven to ten social contacts that they would count to their social circle, or (ii) a treatment condition, where they receive an additional instruction to choose contacts such that they represent a diverse mix of beliefs, if possible. Aim 4 is to test the effects of this instruction.
 
@@ -1708,7 +1738,7 @@ df_h14 <- df_p |>
     delta = var_sc_wave2 - var_sc_wave1
   )
 
-# ── 3. Quick sanity check ──────────────────────────────────────────────────
+# -- 3. Quick sanity check --------------------------------------------------
 
 df_h14 |>
   group_by(group) |>
@@ -1726,7 +1756,7 @@ t.test(var_sc_wave1 ~ group, data = df_h14)
 treatment <- df_h14 |> filter(group == "treatment")
 control   <- df_h14 |> filter(group == "control")
 
-# ── 5. H14-1: Δvar_T > 0 (one-sample t-test) ─────────────────────────────────
+# -- 5. H14-1: Deltavar_T > 0 (one-sample t-test) ---------------------------------
 
 t_test_h1 <- t.test(treatment$delta, mu = 0, alternative = "greater")
 
@@ -1739,13 +1769,13 @@ cat(sprintf("H14-1 Test (Treatment: variance in wave2 > variance in wave1):\n"),
     sprintf("  H1 supported: %s\n",
             t_test_h1$statistic > 0 && t_test_h1$p.value < 0.05))
 
-# ── 6. H14-2: Δvar_T > Δvar_Control (independent samples t-test) ─────────────
+# -- 6. H14-2: Deltavar_T > Deltavar_Control (independent samples t-test) -------------
 
 t_test_h2 <- t.test(delta ~ group, data = df_h14,
                     alternative = "less",  # control - treatment < 0
                     var.equal   = FALSE)
 
-cat(sprintf("H2 Test (Treatment delta in variance > Control delta variance):\n"),
+cat(sprintf("H14-2 Test (Treatment delta in variance > Control delta variance):\n"),
     sprintf("  Mean delta treatment = %.4f (+- %.4f)\n",
             mean(treatment$delta, na.rm = TRUE),
             sd(treatment$delta,   na.rm = TRUE)),
@@ -1776,13 +1806,19 @@ The prediction is $\beta_1 <0$. Higher relative social circle variance on one is
 
 {\color{red} UPDATE: There should be abs signs in the denominator! Otherwise small delta Var's are going to blow up things dramatically.}
 
+{\color{red} UPDATE: This does not need to depend on the Treatment condition group alone. I analysed both now}
+
+
+{\color{red} OPEN QUESTION: Is the denominator: ${\sum_q |\mathrm{var}_{n,q}(w2)  - \mathrm{var}_{n,q}(w1)|}$ or ${\sum_q |\mathrm{var}_{n,q}(w1)|}$?? I chose the first now because this is what we preregistered.}
+
+
 ```{r}
 #| label: H15
 variance_type = "std"
-k = "linear"
+k = "exp"
 
 df_h15 <- df_p |>
-  filter(id %in% treatment_ids) |>
+  # filter(id %in% treatment_ids) |>
   pivot_longer(
     cols = matches(paste0(variance_type,"_socialCircle_ops_")),
     names_to  = c(".value", "issue"),
@@ -1803,14 +1839,15 @@ df_h15 <- df_h15 |>
   group_by(id) |>
   mutate(
     sum_delta_var = sum(abs(delta_var), na.rm = TRUE),
-    rel_delta_var = if_else(sum_delta_var != 0,
+    sum_w1_var = sum(abs(var_w1), na.rm = TRUE),
+    rel_delta_var = if_else(sum_w1_var >0.05,
                             delta_var / sum_delta_var,
                             NA_real_)
   ) |>
   ungroup()
 
 df_weights <- df_p |>
-  filter(id %in% treatment_ids) |>
+  # filter(id %in% treatment_ids) |>
   pivot_longer(
     cols = matches(paste0("^", k, "_alpha_")),
     names_to  = c(".value", "issue"),
@@ -1825,6 +1862,8 @@ df_weights <- df_p |>
 
 df_h15 <- df_h15 |>
   left_join(df_weights, by = c("id", "issue"))
+df_h15 <- df_h15 |>
+  left_join(df_p|> filter(wave==2)|>select(id,treatment_wave2), by = "id")
 
 # α_{n,q}(w2) = α_{n,q}(w1) + β1 * rel_delta_var + ε
 model_h15 <- lm(alpha_w2 ~ alpha_w1 + rel_delta_var, data = df_h15)
@@ -1846,35 +1885,45 @@ cat(sprintf("=== H15 Test (beta1 < 0, %s alpha weights decreased across waves as
 ```
 
 ```{r}
+#| label: H15 -- plot change in alpha over rel change in variance 
 
 # Bin rel_delta_var for cleaner visualization
 df_plot <- df_h15 |>
   filter(!is.na(rel_delta_var), !is.na(alpha_w2), !is.na(alpha_w1)) |>
   mutate(
-    delta_alpha = alpha_w2 - alpha_w1,
-    rel_delta_var_bin = cut(rel_delta_var, breaks = 3 )
+    delta_alpha        = alpha_w2 - alpha_w1,
+    rel_delta_var_bin  = cut(rel_delta_var, breaks = 7),
+    treatment_wave2    = factor(treatment_wave2, levels = c(0, 1),
+                                labels = c("Control", "Treatment"))
   )
 
-ggplot(df_plot, aes(x = rel_delta_var, y = delta_alpha)) +
+ggplot(df_plot, aes(x = rel_delta_var, y = delta_alpha, color = treatment_wave2)) +
   geom_boxplot(
     aes(group = rel_delta_var_bin),
-    fill = "steelblue", alpha = 0.3,
-    outlier.shape = NA 
+    fill = "steelblue", alpha = 0.15,
+    outlier.shape = NA,
+    color = "gray40"          # fixed color so boxplots don't inherit the group color
   ) +
-  geom_point(alpha = 0.3, size = 1.5) +
-  geom_smooth(formula = y ~ x, method = "lm", color = "purple") +
-  geom_smooth(formula = y ~ x, method = "loess", color = "firebrick") +
+  geom_point(alpha = 0.1, size = 1, ) +
+  geom_smooth(formula = y ~ x, method = "lm",    se = FALSE, alpha=0.5) +
+  geom_smooth(formula = y ~ x, method = "loess", se = FALSE, linetype = "dashed", alpha=0.5) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
   geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_color_manual(
+    values = c("Control" = "steelblue", "Treatment" = "firebrick"),
+    name   = "Wave 2"
+  ) +
   labs(
-    title = paste0("H15: Relative social-circle-",variance_type," change vs. issue weight (",k,") change"),
-    x = paste0("Relative Δ social circle ",variance_type),
-    y = paste0("Δ alpha (",k,"w2 − ",k,"w1)")
+    title = paste0("H15: Relative social-circle-", variance_type,
+                   " change vs. issue weight (", k, ") change"),
+    x     = paste0("Relative Delta social circle ", variance_type),
+    y     = paste0("Delta alpha (", k, "w2 - ", k, "w1)")
   ) +
   theme_minimal()
 ```
 
-### H16
+
+### H16 (caution)
 \paragraph{H16. Increase in overall social circle variance decreases distance to typical voters.}
 
 We model the map distances between the participant themselves and typical voters of political parties $r$ in wave $w2$ as 
@@ -1899,6 +1948,8 @@ or alternatively, but that's not really a fair thing to test and not really rela
 
 Model: Is pixel distance at all affected by treatment? ... No. clearly it's the party and individual differences 
 ```{r}
+#| label: H16 -- direct effect of treatment
+#| 
 df_h16 <- df_diff |> 
   filter(id %in% inds_bothwaves, dot1 == "self", dot2 %in% partiesVars, wave==2) |> 
     mutate(
@@ -1912,6 +1963,8 @@ anova(model_h16)
 
 Model: Does previous pixel distance determine new pixel distance or does treatment ahve a direct effect? 
 ```{r}
+#| label: H16 -- direct effect of treatment and previous pixel distance
+
 df_h16_w1 <- df_diff |>
   filter(id %in% inds_bothwaves, dot1 == "self", dot2 %in% partiesVars, wave == 1) |>
   select(id, dot2, pixel_dist_w1 = pixel_dist)
@@ -1931,11 +1984,11 @@ anova(model_h162)
 
 FULL MODEL!
 ```{r}
-#| label: H16
+#| label: H16 -- full
 
 variance_type = "std"
 
-#  Pull distances for wave 1 and wave 2 ────────────────────────────────
+#  Pull distances for wave 1 and wave 2 --------------------------------
 df_h16_w1 <- df_diff |>
   filter(id %in% inds_bothwaves, dot1 == "self", dot2 %in% partiesVars, wave == 1) |>
   select(id, dot2, pixel_dist_w1 = pixel_dist)
@@ -1944,14 +1997,14 @@ df_h16_w2 <- df_diff |>
   filter(id %in% inds_bothwaves, dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
   select(id, dot2, pixel_dist_w2 = pixel_dist)
 
-# Pull opinion change deltaX ───────────────────
+# Pull opinion change deltaX -------------------
 deltaX_cols <- paste0("deltaX_", questions_sc)
 
 df_h16_dx <- df_diff |>
   filter(id %in% inds_bothwaves, dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
   select(id, dot2, all_of(deltaX_cols))
 
-# Pull variance change per participant per issue ────────────────────────────────
+# Pull variance change per participant per issue --------------------------------
 df_h16_var <- df_p |>
   pivot_longer(
     cols = matches(paste0(variance_type,"_socialCircle_ops_")),
@@ -1979,7 +2032,7 @@ df_h16_var_wide <- df_h16_var |>
     values_from = delta_var
   )
 
-# Join everything ────────────────────────────────
+# Join everything --------------------------------
 df_h16 <- df_h16_dx |>
   left_join(df_h16_w1, by = c("id", "dot2")) |>
   left_join(df_h16_w2, by = c("id", "dot2")) |>
@@ -1993,13 +2046,13 @@ df_h16 <- df_h16_dx |>
     ),
   )
 
-# Fit model ───────────────────────────────────────────────────────────
+# Fit model -----------------------------------------------------------
 # d_w2 = d_w1 + β1 * weighted_var_change + beta2 * treatment + random-effects +  ε
 model_h16 <- lmer(pixel_dist_w2 ~ pixel_dist_w1 + weighted_var_change + group + (1|id), data = df_h16, REML=TRUE)
 
 print(summary(model_h16))
 
-# ── 5. Test H16: β_wvc < 0 ────────────────────────────────────────────────
+# -- 5. Test H16: β_wvc < 0 ------------------------------------------------
 beta1      <- fixef(model_h16)["weighted_var_change"]
 se_beta1   <- summary(model_h16)$coefficients["weighted_var_change", "Std. Error"]
 t_stat     <- summary(model_h16)$coefficients["weighted_var_change", "t value"]
@@ -2014,7 +2067,7 @@ cat(sprintf("H16 Test (beta_weighted_var_change < 0):\n"),
 ```
 
 
-### H17
+### H17 (caution)
 \paragraph{H17. Increase in overall social circle variance increases likeability rating of typical voters.}
 
 Similarly, we model how participant $n$ rates the likeability rating of typical voters of party $r$ in wave 2 as 
@@ -2027,6 +2080,8 @@ The prediction is $\beta_1 > 0$. When overall social circle variance increases, 
 
 Most simple:  Does treatment affect liking? No obviously not! 
 ```{r}
+#| label: H17 -- direct effect of treatment on sympathy
+
 df_h17 <- df_diff |> 
   filter(id %in% inds_bothwaves, dot1 == "self", dot2 %in% partiesVars, wave==2) |> 
     mutate(
@@ -2040,22 +2095,22 @@ anova(model_h17)
 
 Full Model
 ```{r}
-#| label: H17
+#| label: H17 -- full
 
-# ── 1. Pull liking for wave 1 and wave 2 ──────────────────────────────────
+# -- 1. Pull liking for wave 1 and wave 2 ----------------------------------
 df_h17_w2 <- df_diff |>
   filter(id %in% inds_bothwaves, dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
   select(id, dot2, like_w2 = sympathy)
 
-# ── 2. Pull deltaX and variance change (identical to H16) ─────────────────
+# -- 2. Pull deltaX and variance change (identical to H16) -----------------
 df_h17_dx <- df_diff |>
   filter(id %in% inds_bothwaves, dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
   select(id, dot2, all_of(deltaX_cols))
 
-# ── 3. Pull variance change (reuse from H16) ──────────────────────────────
+# -- 3. Pull variance change (reuse from H16) ------------------------------
 # df_h16_var_wide already computed above — reuse directly
 
-# ── 4. Join and compute weighted variance change ───────────────────────────
+# -- 4. Join and compute weighted variance change ---------------------------
 df_h17 <- df_h17_dx |>
   left_join(df_h17_w2, by = c("id", "dot2")) |>
   left_join(df_h16_var_wide, by = "id") |>
@@ -2068,13 +2123,13 @@ df_h17 <- df_h17_dx |>
     )
   )
 
-# ── 6. Fit model ───────────────────────────────────────────────────────────
+# -- 6. Fit model -----------------------------------------------------------
 # like_w2 = β0 + β_wvc * weighted_var_change + β_group * group + (1|id) + ε
 model_h17 <- lmer(like_w2 ~  weighted_var_change + group + (1|id), 
                   data = df_h17, REML = TRUE)
 print(summary(model_h17))
 
-# ── 7. Test H17: β_wvc > 0 ────────────────────────────────────────────────
+# -- 7. Test H17: β_wvc > 0 ------------------------------------------------
 beta1       <- fixef(model_h17)["weighted_var_change"]
 se_beta1    <- summary(model_h17)$coefficients["weighted_var_change", "Std. Error"]
 t_stat      <- summary(model_h17)$coefficients["weighted_var_change", "t value"]
@@ -2087,59 +2142,234 @@ cat(sprintf("H17 Test (beta_wvc > 0):\n"),
     sprintf("  H17 supported: %s\n", beta1 > 0 && p_onetailed < 0.05))
 ```
 
-# NEW: new versions of H16 and H17 (moderation) 
+## NEW: new versions of H16 and H17 (moderation) 
 
-## H16 new
-The marginal effect of $\Delta X$ on $d$ increases as social circle variance decreases.
+### H16 new
+\paragraph{H16: Treatment increases social circle variance, which weakens the effect of opinion differences on perceived distance.}
 
-Imagine we had only one question: 
+We test this hypothesis in two steps, conditional on H14 being confirmed (i.e., the nudge successfully increased social circle variance in the treatment group).
 
+\textbf{Step 1 — Intent-to-Treat (ITT):} Does the treatment moderate the relationship between opinion differences $\Delta X_{n,r,q} = \lvert x_{n,\text{self},q} - x_{n,r,q} \rvert$ and perceived distance $d$? We model:
 \begin{equation}
-d_{\mathrm{self}-r, n}(wave 2) = \beta_0 + \beta_1 \cdot \Delta X_{n,r,q} + \beta_2 \cdot \mathrm{var}_{n,q}(w2) + \beta_3 \cdot \Delta X_{n,r,q} \cdot \mathrm{var}_{n,q}(w2)  + beta_4 \cdot wave + u_n + v_r + \epsilon_{n,r,wave}
+    d_{n, \text{self}-r, q}(w2) = \beta_0 + \beta_1 \cdot \Delta X_{n,r,q} + \beta_2 \cdot \mathbb{I}(\text{condition}_n = T) + \beta_3 \cdot \Delta X_{n,r,q} \cdot \mathbb{I}(\text{condition}_n = T) + u_n + v_r + v_q + \epsilon_{n,r,q}
+\end{equation}
+where $u_n$ is the participant random intercept, $v_r$ the party voter random intercept, and $v_q$ the question random intercept. The prediction is $\beta_3 < 0$: the treatment weakens the effect of opinion differences on perceived distance.
+
+\textbf{Step 2 — Variance as moderator:} Does the actual change in variance $\Delta \text{var}_{n,q} = \text{var}_{n,q}(w2) - \text{var}_{n,q}(w1)$ moderate the $\Delta X \to d$ relationship, above and beyond treatment assignment?
+\begin{equation}
+    d_{n, \text{self}-r, q}(w2) = \beta_0 + \beta_1 \cdot \Delta X_{n,r,q} + \beta_2 \cdot \Delta \text{var}_{n,q} + \beta_3 \cdot \Delta X_{n,r,q} \cdot \Delta \text{var}_{n,q} + u_n + v_r + v_q + \epsilon_{n,r,q}
+\end{equation}
+The prediction is $\beta_3 < 0$: when social circle variance increases, the effect of opinion differences on perceived distance weakens. Step 2 speaks to the \emph{mechanism}: it is the variance increase itself, not merely treatment assignment, that drives the moderation. Together, Steps 1 and 2 establish the causal chain:
+\begin{equation}
+    \mathbb{I}(T) \xrightarrow{H14} \Delta \text{var} \xrightarrow{\beta_3 < 0} \text{weakens } (\Delta X \to d)
 \end{equation}
 
-where $v_r$ is the party intercept, and $u_n$ the participant intercept. 
-
-With multiple questions: 
-When social circle variance is smaller, the relationship between observed differences $\Delta X$ and inferred distance $d$ becomes stronger. Variance moderates the predictive power of $\delta X$ for $d$.
-
 ```{r}
-variance_type = "std"
-q_pattern <- paste(questions_sc, collapse = "|")
-df_h16_2 <- df_diff |> 
-  filter(dot1 == "self" & dot2 %in% partiesVars) |>
+#| label: H16 -- treatment moderates deltaX -> distance via variance
+
+variance_type <- "std"
+var_col       <- paste0(variance_type, "_socialCircle_ops")
+q_pattern     <- paste(questions_sc, collapse = "|")
+
+# -- 1. Build long dataset (wave 2 only) for Step 1 (ITT) ---------------------
+df_h16_itt <- df_diff |>
+  filter(
+    dot1 == "self",
+    dot2 %in% partiesVars,
+    wave == 2,
+    id %in% c(treatment_ids, control_ids)
+  ) |>
+  mutate(
+    group = case_when(
+      id %in% treatment_ids ~ "treatment",
+      id %in% control_ids   ~ "control"
+    ),
+  )|>
   pivot_longer(
     cols = matches(
-      paste0("^(deltaX|", variance_type, "_socialCircle_ops)_(", q_pattern, ")$")
+      paste0("^(deltaX|", var_col, ")_(", q_pattern, ")$")
     ),
-    names_to = c(".value", "q"),
-    names_pattern = paste0(
-      "^(deltaX|", variance_type, "_socialCircle_ops)_(", q_pattern, ")$"
-    )
-  ) |> 
-  select(id, wave, dot1, dot2 , pixel_dist, var_sc) 
-df_h16_2 <- df_h17_2 |>
-  mutate(
-    var_c = 
-      as.numeric(scale(
-        .data[[paste0(variance_type, "_socialCircle_ops")]],
-        center = TRUE,
-        scale = FALSE
-      ))
-  )
-model <- lmer(
-  pixel_dist ~ deltaX * std_c +
-    wave +
-    control +
-    (1 | id) +
-    (1 | dot2),
-  data = df_h17_2
-)
+    names_to      = c(".value", "issue"),
+    names_pattern = paste0("^(deltaX|", var_col, ")_(", q_pattern, ")$")
+  ) |>
+  select(id, wave, dot2, group, pixel_dist, issue, deltaX, all_of(var_col)) |>
+  mutate(treatment = as.numeric(id %in% treatment_ids))
 
-summary(model)
+
+# -- 2. Build delta_var from df_p (waves 1 & 2) for Step 2 -------------------
+df_delta_var <- df_p |>
+  filter(id %in% c(treatment_ids, control_ids)) |>
+  pivot_longer(
+    cols         = matches(paste0(var_col, "_")),
+    names_to     = c(".value", "issue"),
+    names_pattern = paste0("^(", var_col, ")_(.*)")
+  ) |>
+  pivot_wider(
+    id_cols      = c(id, issue),
+    names_from   = wave,
+    names_prefix = "var_w",
+    values_from  = all_of(var_col)
+  ) |>
+  mutate(
+    delta_var   = var_w2 - var_w1,
+    delta_var_centered = as.numeric(scale(delta_var, center = TRUE, scale = FALSE))
+  ) |>
+  select(id, issue, delta_var, delta_var_centered)
+
+
+# -- 3. Join delta_var into wave-2 dataset for Step 2 ------------------------
+df_h16_var <- df_h16_itt |>
+  left_join(df_delta_var, by = c("id", "issue"))
+
+
+# -- Step 1: ITT ---------------------------------------------------------------
+# Does treatment moderate the deltaX -> pixel_dist relationship?
+model_h16_itt <- lmer(
+  pixel_dist ~ deltaX * treatment +
+    (1 | id) +
+    (1 | issue) +
+    (1 | dot2),
+  data = df_h16_itt
+)
+summary(model_h16_itt)
+
+cat(sprintf(
+  "\nITT interaction (beta_3): %.4f\nPrediction (beta_3 < 0): %s\n",
+  fixef(model_h16_itt)["deltaX:treatment"],
+  fixef(model_h16_itt)["deltaX:treatment"] < 0
+))
+
+
+# -- Step 2: Variance as moderator ---------------------------------------------
+# Does actual delta_var moderate the deltaX -> pixel_dist relationship?
+model_h16_var <- lmer(
+  pixel_dist ~ deltaX * delta_var_centered +
+    (1 | id) +
+    (1 | issue) +
+    (1 | dot2),
+  data = df_h16_var
+)
+summary(model_h16_var)
+
+cat(sprintf(
+  "\nVariance moderation (beta_3): %.4f\nPrediction (beta_3 < 0): %s\n",
+  fixef(model_h16_var)["deltaX:delta_var_centered"],
+  fixef(model_h16_var)["deltaX:delta_var_centered"] < 0
+))
 
 ```
-TO BE FIXED
+
+
+### H17 new 
+\paragraph{H17: Treatment increases social circle variance, which increases likeability ratings of typical party voters.}
+
+We test this hypothesis in two steps, conditional on H14 being confirmed (i.e., the nudge successfully increased social circle variance in the treatment group).
+
+\textbf{Step 1 — Intent-to-Treat (ITT):} Does the treatment moderate the relationship between opinion differences $\Delta X_{n,r,q}$ and likeability ratings $y_{n,r}$? We model:
+\begin{equation}
+    y_{n,r,q}(w2) = \beta_0 + \beta_1 \cdot \Delta X_{n,r,q} + \beta_2 \cdot \mathbb{I}(\text{condition}_n = T) + \beta_3 \cdot \Delta X_{n,r,q} \cdot \mathbb{I}(\text{condition}_n = T) + u_n + v_r + v_q + \epsilon_{n,r,q}
+\end{equation}
+where $u_n$ is the participant random intercept, $v_r$ the party voter random intercept, and $v_q$ the question random intercept. The prediction is $\beta_3 > 0$: the treatment weakens the negative effect of opinion differences on likeability, i.e. participants in the treatment condition rate typical voters of parties they disagree with more favourably.
+
+\textbf{Step 2 — Variance as moderator:} Does the actual change in variance $\Delta \text{var}_{n,q} = \text{var}_{n,q}(w2) - \text{var}_{n,q}(w1)$ moderate the $\Delta X \to y$ relationship, above and beyond treatment assignment?
+\begin{equation}
+    y_{n,r,q}(w2) = \beta_0 + \beta_1 \cdot \Delta X_{n,r,q} + \beta_2 \cdot \Delta \text{var}_{n,q} + \beta_3 \cdot \Delta X_{n,r,q} \cdot \Delta \text{var}_{n,q} + u_n + v_r + v_q + \epsilon_{n,r,q}
+\end{equation}
+The prediction is $\beta_3 > 0$: when social circle variance increases, the negative effect of opinion differences on likeability weakens. Step 2 speaks to the \emph{mechanism}: it is the variance increase itself, not merely treatment assignment, that drives the moderation. Together, Steps 1 and 2 establish the causal chain:
+\begin{equation}
+    \mathbb{I}(T) \xrightarrow{H14} \Delta \text{var} \xrightarrow{\beta_3 > 0} \text{weakens } (\Delta X \to -y)
+\end{equation}
+
+```{r}
+#| label: H17 -- treatment moderates deltaX -> likeability via variance
+
+variance_type <- "std"
+var_col       <- paste0(variance_type, "_socialCircle_ops")
+q_pattern     <- paste(questions_sc, collapse = "|")
+
+# -- 1. Build long dataset (wave 2 only) for Step 1 (ITT) ---------------------
+# Note: replace `likeability` with the actual column name in your data
+df_h17_itt <- df_diff |>
+  filter(
+    dot1 == "self",
+    dot2 %in% partiesVars,
+    wave == "2",
+    id %in% c(treatment_ids, control_ids)
+  ) |>
+  pivot_longer(
+    cols = matches(
+      paste0("^(deltaX|", var_col, ")_(", q_pattern, ")$")
+    ),
+    names_to      = c(".value", "issue"),
+    names_pattern = paste0("^(deltaX|", var_col, ")_(", q_pattern, ")$")
+  ) |>
+  select(id, wave, dot2, sympathy, issue, deltaX, all_of(var_col)) |>
+  mutate(treatment = as.numeric(id %in% treatment_ids))
+
+
+# -- 2. Reuse delta_var from H16 pipeline -------------------------------------
+# If running independently, rebuild it here:
+df_delta_var <- df_p |>
+  filter(id %in% c(treatment_ids, control_ids)) |>
+  pivot_longer(
+    cols          = matches(paste0(var_col, "_")),
+    names_to      = c(".value", "issue"),
+    names_pattern = paste0("^(", var_col, ")_(.*)")
+  ) |>
+  pivot_wider(
+    id_cols      = c(id, issue),
+    names_from   = wave,
+    names_prefix = "var_w",
+    values_from  = all_of(var_col)
+  ) |>
+  mutate(
+    delta_var   = var_w2 - var_w1,
+    delta_var_centered = as.numeric(scale(delta_var, center = TRUE, scale = FALSE))
+  ) |>
+  select(id, issue, delta_var, delta_var_centered)
+
+
+# -- 3. Join delta_var into wave-2 dataset for Step 2 -------------------------
+df_h17_var <- df_h17_itt |>
+  left_join(df_delta_var, by = c("id", "issue"))
+
+
+# -- Step 1: ITT ---------------------------------------------------------------
+# Does treatment moderate the deltaX -> likeability relationship?
+model_h17_itt <- lmer(
+  sympathy ~ deltaX * treatment +
+    (1 | id) +
+    (1 | issue) +
+    (1 | dot2),
+  data = df_h17_itt
+)
+summary(model_h17_itt)
+
+cat(sprintf(
+  "\nITT interaction (beta_3): %.4f\nPrediction (beta_3 > 0): %s\n",
+  fixef(model_h17_itt)["deltaX:treatment"],
+  fixef(model_h17_itt)["deltaX:treatment"] > 0
+))
+
+
+# -- Step 2: Variance as moderator ---------------------------------------------
+# Does actual delta_var moderate the deltaX -> likeability relationship?
+model_h17_var <- lmer(
+  sympathy ~ deltaX * delta_var_centered +
+    (1 | id) +
+    (1 | issue) +
+    (1 | dot2),
+  data = df_h17_var
+)
+summary(model_h17_var)
+
+cat(sprintf(
+  "\nVariance moderation (beta_3): %.4f\nPrediction (beta_3 > 0): %s\n",
+  fixef(model_h17_var)["deltaX:delta_var_centered"],
+  fixef(model_h17_var)["deltaX:delta_var_centered"] > 0
+))
+```
+
 
 
 # \section{Exclusion criteria}

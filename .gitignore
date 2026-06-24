@@ -6,3 +6,4 @@ wave2
 0_*_files
 __pycache__
 .R*
+.vdoc*

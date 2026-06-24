@@ -20,11 +20,11 @@ l1norm = lambda x: np.sum(np.abs(x[f"deltaX_"]))
 LRcuts = [0,0.3,0.7,1.]
 
 # %%
-df_p = pd.read_csv("processed_data/2026-05-19_data_processed_participant_withAllIssueWeights.csv")
-df_diff = pd.read_csv("processed_data/2026-05-19_data_processed_differences_withAllIssueWeights.csv")
+df_p = pd.read_csv("processed_data/2026-06-19_data_processed_participant_withAllIssueWeights.csv")
+df_diff = pd.read_csv("processed_data/2026-06-19_data_processed_differences_withAllIssueWeights.csv")
 # %%
-k = "exponential"
-func=s if k=="exponential" else linear
+k = "exp"
+func=s if k=="exp" else linear
 wave = 1
 fig, axs = plt.subplot_mosaic([["a", "b"], ["curve", "curve"]], height_ratios=[1,2], figsize=(16/2.54, 10/2.54))
 for ax, col in zip([axs["a"], axs["b"]], [f"{k}_param1", f"{k}_param2"]): 
