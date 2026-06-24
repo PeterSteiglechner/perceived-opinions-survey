@@ -276,23 +276,35 @@ g.figure.tight_layout()
 g.figure.savefig("figs/corrP_stdSC.png", dpi=150, bbox_inches="tight")
 
 # %%
-# 13. Change in weights over two waves
+# 13. Change in weights/corr/stdSC over two waves
 
-k = "corrP"
-fig, axes = plt.subplots(4, 3, figsize=(8, 3.5), sharey="row", sharex=True, height_ratios=[1,2,1,2])
-for ax, ax2, q in zip(axes[[1,3], :].flatten(), axes[[0,2],:].flatten(), questions_sc): 
-    alpha_change = df_p.pivot_table(index="wave", columns="id", values=f"{k}_alpha_{q}").diff(axis=0).query("wave==2").T.rename(columns={2:"diff"})
+# k = "std_socialCircle_ops"
+# kname = r"\sigma_{sc}"
+# k="linear_alpha"
+# kname = r"\alpha_{d,\Delta X}"
+k = "corrP_alpha"
+kname = r"r_{d,\Delta X}"
+palette = {0.:"darkgrey", 1.:"magenta"}
+fig, axes = plt.subplots(5, 3, figsize=(7, 4.5), sharey="row", sharex=True, height_ratios=[1,2,0.2,1,2])
+for ax in axes[2,:].flatten():
+    ax.axis("off")
+for ax, ax2, q in zip(axes[[1,4], :].flatten(), axes[[0,3],:].flatten(), questions_sc): 
+    ax.axvline(0,color="k")
+    ax2.axvline(0,color="k")
+    alpha_change = df_p.pivot_table(index="wave", columns="id", values=f"{k}_{q}").diff(axis=0).query("wave==2").T.rename(columns={2:"diff"})
     alpha_change = alpha_change.join(df_p.query("wave==2")[["id", "treatment_wave2"]].set_index("id"),)
-    sns.histplot(alpha_change, x="diff", hue="treatment_wave2", ax=ax, legend=False)
-    sns.boxplot(alpha_change, x="diff", hue="treatment_wave2", ax=ax2, legend=False, fliersize=False)
-    ax.set_xlabel(fr"$\Delta {k}_{'{(w2-w1)}'}$")
-palette = sns.color_palette()
-handles = [
-    Patch(facecolor=palette[0], label="Control"),
-    Patch(facecolor=palette[1], label="Treatment"),
+    sns.histplot(alpha_change, x="diff", hue="treatment_wave2", ax=ax, legend=False, palette=palette)
+    sns.boxplot(alpha_change, x="diff", hue="treatment_wave2", ax=ax2, legend=False, fliersize=False, palette=palette)
+    mean_diff = alpha_change.groupby("treatment_wave2")["diff"].mean().reset_index()
+    sns.stripplot(x="diff", y=None, hue="treatment_wave2", data=mean_diff, ax=ax2, legend=False, dodge=True, s=4, marker="s", linewidth=1, edgecolor="k", palette=palette)
+    ax.set_xlabel(fr"$\Delta {kname}{'{(w2-w1)}'}$")
+    ax2.set_title(f"{q}")
+legend_handles = [
+    Patch(facecolor=palette[0.], label="Control"),
+    Patch(facecolor=palette[1.], label="Treatment"),
 ]
 axes[-1,-1].legend(
-    handles,
+    legend_handles,
     labels=["Control", "Treatment"],
     fontsize=7,
     frameon=False,
@@ -301,5 +313,77 @@ axes[-1,-1].legend(
     handletextpad=0.4,
     labelspacing=0.3,
 )
+fig.tight_layout(h_pad=0)
+
+# %%
+# 14. Relation stdSC to corrP/issue weights
+# k = "corrP_alpha"
+# kname = r"r_{d,\Delta X}"
+k = "exp_alpha"
+kname = r"\alpha_{q}"
+fig, axes = plt.subplots(2, 3, figsize=(7, 4.5), sharey=True, sharex=True, )
+# for ax in axes[2,:].flatten():
+#     ax.axis("off")
+palette = {0.:"darkgrey", 1.:"magenta"}
+for ax,  q in zip(axes.flatten(),  questions_sc): 
+    ax.axvline(0,color="k")
+    ax.axhline(0,color="k")
+    alpha_change = df_p.pivot_table(index="wave", columns="id", values=f"{k}_{q}").diff(axis=0).query("wave==2").T.rename(columns={2:"diff"})
+    std_change = df_p.pivot_table(index="wave", columns="id", values=f"std_socialCircle_ops_{q}").diff(axis=0).query("wave==2").T.rename(columns={2:"std_diff"})
+    std_change = std_change.join(df_p.query("wave==2")[["id", "treatment_wave2"]].set_index("id"),)
+    ddd = std_change.join(alpha_change)
+    for trt, color in palette.items():
+        subset = ddd[ddd["treatment_wave2"] == trt]
+
+        sns.regplot(
+            data=subset,
+            x="std_diff",
+            y="diff",
+            ax=ax,
+            scatter=False,
+            color=color,
+
+            line_kws={"linestyle":"--" if trt==1 else "-"}
+        )
+
+    sns.scatterplot(
+        data=ddd,
+        x="std_diff",
+        y="diff",
+        hue="treatment_wave2",
+        ax=ax,
+        legend=False,
+        palette=palette,
+        alpha=0.2,
+        size=1,
+    )
+    ax.set_title(f"{q}")
+    ax.set_xlabel(""); ax.set_ylabel("")
+    # sns.scatterplot(ddd, y="diff", x="std_diff", hue="treatment_wave2", ax=ax, legend=False, palette=palette, size=2, alpha=0.2, lw=0.1, edgecolor="w")
+    # sns.scatterplot(ddd, y="diff", x="std_diff", hue="treatment_wave2", ax=ax, legend=False, palette=palette, size=2, alpha=0.2, lw=0.1, edgecolor="w")
+    # sns.boxplot(alpha_change, x="diff", hue="treatment_wave2", ax=ax2, legend=False, fliersize=False, palette=palette)
+    # mean_diff = alpha_change.groupby("treatment_wave2")["diff"].mean().reset_index()
+    # sns.stripplot(x="diff", y=None, hue="treatment_wave2", data=mean_diff, ax=ax2, legend=False, dodge=True, s=4, marker="s", linewidth=1, edgecolor="k", palette=palette)
+for ax in axes[-1,:]:
+    ax.set_xlabel(fr"$\Delta \sigma_{'{sc}'}{'{(w2-w1)}'}$")
+for ax in axes[:,0]:
+    ax.set_ylabel(fr"$\Delta {kname}{'{(w2-w1)}'}$")
+    
+legend_handles = [
+    Patch(facecolor=palette[0.], label="Control"),
+    Patch(facecolor=palette[1.], label="Treatment"),
+]
+axes[-1,-1].legend(
+    legend_handles,
+    labels=["Control", "Treatment"],
+    fontsize=7,
+    frameon=False,
+    loc="upper right",
+    handlelength=1.2,
+    handletextpad=0.4,
+    labelspacing=0.3,
+)
+fig.tight_layout(h_pad=0)
+
 
 # %%

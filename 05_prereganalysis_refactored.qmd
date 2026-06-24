@@ -1,0 +1,1648 @@
+---
+title: "Opinion Perception Survey Analysis (preregistration)"
+author: "Peter Steiglechner"
+date: "19.06.2026"
+engine: knitr
+knitr:
+  opts_chunk:
+    comment: ""
+    results: hold
+format:
+  html:
+    code-fold: true
+    tidy: true
+    collapse: false
+    theme: cosmo
+    css: styles.css
+  pdf:
+    include-in-header:
+        text: |
+          \usepackage{xcolor}
+          \let\oldverbatim\verbatim
+          \let\endoldverbatim\endverbatim
+          \renewenvironment{verbatim}
+            {\color{violet}\oldverbatim}
+            {\endoldverbatim}
+    documentclass: article
+    toc: true
+    number-sections: true
+    colorlinks: true
+    geometry:
+      - top=2mm
+      - left=2mm
+      - right=2mm
+      - bottom=2mm
+---
+
+```{=latex}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\newcommand{\smallpmatrix}[1]{\left(\begin{smallmatrix}#1\end{smallmatrix}\right)}
+```
+
+```{r}
+#| label: imports
+#| output: false
+
+load_or_install <- function(pkg) {
+  if (!require(pkg, character.only = TRUE)) {
+    install.packages(pkg)
+    library(pkg, character.only = TRUE)
+  }
+}
+pkgs <- c(
+  "tidyverse", "lme4", "lmerTest", "nloptr", "httpgd",
+  "languageserver", "lmtest", "sandwich", "caret", "knitr",
+  "prettycode", "performance", "estimatr", "patchwork"
+)
+knitr::opts_chunk$set(comment = NA)
+invisible(lapply(pkgs, load_or_install))
+options(vsc.viewer = TRUE)
+theme(
+  text = element_text(family = "Noto Sans")
+)
+options(tibble.print_max = Inf)
+options(tibble.width = Inf)
+```
+
+\section{Hypotheses and analysis plan}
+
+All hypotheses concerning a single slope parameter (e.g., H1 to H3) are tested using a t-test at significance level $\alpha = 0.05$. Hypotheses involving multiple parameters are tested using a single F-test on their joint significance, also at $\alpha = 0.05$. All subsequent hypotheses follow this convention without further repetition.
+
+```{r}
+#| label: helpers
+
+# -- Standardised test-result printers -----------------------------------------
+
+#' One-sided t-test result block (for single beta)
+print_one_sided <- function(label, beta, se, t, df = Inf,
+                             direction = c("negative", "positive"),
+                             ci = NULL) {
+  direction <- match.arg(direction)
+  p_two  <- 2 * pt(-abs(t), df = df)
+  p_one  <- if ((direction == "negative" && beta < 0) ||
+                (direction == "positive" && beta > 0)) p_two / 2 else 1 - p_two / 2
+  supported <- p_one < 0.05 && ((direction == "negative" && beta < 0) ||
+                                  (direction == "positive" && beta > 0))
+
+  cat(sprintf("=== %s ===\n", label))
+  cat(sprintf("  Estimate  = %8.4f\n", beta))
+  cat(sprintf("  SE        = %8.4f\n", se))
+  cat(sprintf("  t         = %8.4f\n", t))
+  cat(sprintf("  df        = %s\n",    ifelse(is.finite(df), sprintf("%.1f", df), "infty")))
+  if (!is.null(ci))
+    cat(sprintf("  95%% CI    = [%.4f, %.4f]\n", ci[1], ci[2]))
+  cat(sprintf("  p (one-sided, beta %s 0) = %.4f\n",
+              ifelse(direction == "negative", "<", ">"), p_one))
+  cat(sprintf("  Supported : %s\n\n", ifelse(supported, "YES", "NO")))
+  invisible(list(beta = beta, t = t, p_one = p_one, supported = supported))
+}
+
+#' LRT / F-test result block
+print_lrt <- function(label, stat, df_num, df_den = NULL, p,
+                       type = c("chi2", "F")) {
+  type <- match.arg(type)
+  cat(sprintf("=== %s ===\n", label))
+  if (type == "chi2")
+    cat(sprintf("  chi^2(%d) = %.3f,  p = %.4f  %s\n\n",
+                df_num, stat, p, sig_stars(p)))
+  else
+    cat(sprintf("  F(%d, %d) = %.3f,  p = %.4f  %s\n\n",
+                df_num, df_den, stat, p, sig_stars(p)))
+  invisible(list(stat = stat, p = p))
+}
+
+#' Model-fit comparison table
+print_fit_table <- function(...) {
+  models <- list(...)
+  tbl <- data.frame(
+    Model    = names(models),
+    AIC      = round(sapply(models, AIC), 1),
+    BIC      = round(sapply(models, BIC), 1),
+    logLik   = round(sapply(models, \(m) as.numeric(logLik(m))), 1),
+    npar     = sapply(models, \(m) length(fixef(m)))
+  )
+  tbl$delta_AIC <- tbl$AIC - min(tbl$AIC)
+  tbl$delta_BIC <- tbl$BIC - min(tbl$BIC)
+  print(tbl, row.names = FALSE)
+  invisible(tbl)
+}
+
+sig_stars <- function(p) {
+  case_when(p < .001 ~ "***", p < .01 ~ "**", p < .05 ~ "*",
+            p < .1 ~ ".", TRUE ~ "ns")
+}
+
+# Extract lmer beta, SE, t, Satterthwaite df in one call
+lmer_coef <- function(model, term) {
+  cf <- summary(model)$coefficients
+  list(
+    beta = cf[term, "Estimate"],
+    se   = cf[term, "Std. Error"],
+    t    = cf[term, "t value"],
+    df   = cf[term, "df"],          # added by lmerTest
+    p2   = cf[term, "Pr(>|t|)"]
+  )
+}
+
+```
+```{r}
+#| label: consts
+
+questions_sc <- c(
+  "climate_concern", "gay_marriage", "rights_indep_integration",
+  "econ_inequality", "regulate_internet", "east_germans"
+)
+parties         <- c("Left Party","BSW","Green Party","SPD","FDP","CDU/CSU",
+                     "AfD","No party","Other party","Refuse to say/No answer")
+partiesVars     <- c("LeftParty","BSW","GreenParty","SPD","FDP","CDU/CSU","AfD")
+partiesCloseSel <- c("Left Party","BSW","Green Party","SPD","FDP","CDU/CSU","AfD")
+
+# Shared column-name vectors (used across many hypotheses)
+col_deltas    <- paste0("deltaX_",       questions_sc)
+col_alpha_exp <- paste0("exp_alpha_",    questions_sc)
+col_alpha_lin <- paste0("linear_alpha_", questions_sc)
+col_weights   <- paste0("w_",            questions_sc)
+col_var_std   <- paste0("std_socialCircle_ops_", questions_sc)
+col_var_var   <- paste0("var_socialCircle_ops_", questions_sc)
+
+```
+
+# Load Data
+```{r}
+#| label: load_data
+
+df_p <- read.csv(
+  "processed_data/2026-06-19_data_processed_participant_withAllIssueWeights.csv"
+)
+
+inds_bothwaves <- df_p |>
+  count(id) |>
+  filter(n == 2) |>
+  pull(id)
+
+treatment_ids <- df_p |>
+  filter(wave == 2, treatment_wave2 == TRUE, id %in% inds_bothwaves) |>
+  pull(id)
+control_ids <- df_p |>
+  filter(wave == 2, treatment_wave2 == FALSE, id %in% inds_bothwaves) |>
+  pull(id)
+
+df_p <- df_p |>
+  mutate(
+    overall_std_socialCircle = rowMeans(across(all_of(col_var_std))),
+    across(all_of(col_var_std), \(x) x^2,
+           .names = "var_{gsub('std_', '', col)}"),
+    wave = factor(wave)
+  )
+
+df_diff <- read.csv(
+  "processed_data/2026-06-19_data_processed_differences_withAllIssueWeights.csv"
+) |>
+  mutate(
+    ingroupdummy = as.integer(ingroupdummy == "True"),
+    wave         = factor(wave)
+  ) |>
+  left_join(
+    df_p |> select(id, wave,
+                   all_of(paste0("var_socialCircle_ops_",  questions_sc)),
+                   all_of(paste0("std_socialCircle_ops_", questions_sc))),
+    by = c("id", "wave")
+  )
+```
+
+
+# Hypotheses
+
+
+## Aim 1 
+\subsection*{Aim 1: Compare approaches to measuring perceived political differences}
+
+### H1 
+\paragraph{H1. Participants place the typical voter of the party they affiliate with nearer to themselves than other typical voters.}
+
+We model the distance between the dots representing the participant ($\mathrm{self}$) and the typical voter of each party $r$ as
+\begin{equation}
+    d_{n,\text{self},r}
+    = \beta_0 + \beta_1 \,\mathbb{I}\bigl(r = {party}_n\bigr) + u_n + \epsilon_{n,r},
+\end{equation}
+where $\mathbb{I}(\cdot)$ is an indicator function, $u_n$ is a participant level random intercept, and $\epsilon_{n,r}$ is an error term.
+
+The prediction is $\beta_1 < 0$. 
+Participants who prefer a political party place the typical voter of that party closer to themselves than the average of the typical voters of other parties.
+
+```{r}
+#| label: H1
+
+df_h1 <- df_diff |>
+  filter(wave %in% c(1, 2), dot1 == "self", dot2 %in% partiesVars) |>
+  select(id, wave, ingroupdummy, party, pixel_dist)
+
+m_h1    <- lmer(pixel_dist ~ ingroupdummy + wave + (1 | id), data = df_h1, REML = TRUE)
+ci_h1   <- confint(m_h1, parm = "ingroupdummy", method = "Wald")
+cf_h1   <- lmer_coef(m_h1, "ingroupdummy")
+
+print_one_sided("H1: Ingroup party placed closer to self",
+                cf_h1$beta, cf_h1$se, cf_h1$t, cf_h1$df,
+                direction = "negative", ci = ci_h1)
+```
+
+### H2
+
+\paragraph{H2. Distances to voters on the map correspond to likeability ratings.}
+
+We model likeability ratings of the typical voter of political party $r$ (rated only in wave 2) as a function of map distances:
+\begin{equation}\label{eq:symp_base}
+    y_{n,r} = \beta_0 + \beta_1 \cdot d_{n,\mathrm{self}-r} + u_n + \epsilon_{n,r}.
+\end{equation}
+
+The prediction is $\beta_1 < 0$. 
+Voters placed farther away from the participant's own dot on the map receive lower likeability ratings than voters placed closer to the participant's own dot.
+
+
+```{r}
+#| label: H2
+
+df_h2 <- df_diff |>
+  filter(wave == 2, dot1 == "self", dot2 %in% partiesVars) |>
+  select(id, sympathy, party, pixel_dist)
+
+m_h2  <- lmer(sympathy ~ pixel_dist + (1 | id), data = df_h2, REML = TRUE)
+ci_h2 <- confint(m_h2, parm = "pixel_dist", method = "Wald")
+cf_h2 <- lmer_coef(m_h2, "pixel_dist")
+
+print_one_sided("H2: Map distance predicts likeability",
+                cf_h2$beta, cf_h2$se, cf_h2$t, cf_h2$df,
+                direction = "negative", ci = ci_h2)
+
+```
+
+### H3 
+
+\paragraph{H3. Distances on the political map correspond to similarity ratings.}
+
+Similar to H2, we model similarity ratings between a pair of individuals, $i$ and $j$, as a function of map distances:
+\begin{equation}
+    s_{n,ij} = \beta_0 + \beta_1 \cdot d_{n,ij} + u_n + \epsilon_{n,ij}  \ .
+\end{equation}
+
+The prediction is $\beta_1 < 0$.
+Pairs placed farther apart on the map receive lower similarity ratings than pairs placed closer together.
+```{r}
+#| label: H3
+
+df_h3 <- df_diff |>
+  filter(wave %in% c(1, 2)) |>
+  select(id, wave, pairwise_similarity, pixel_dist) |>
+  drop_na()
+
+m_h3  <- lmer(pairwise_similarity ~ pixel_dist + wave + (1 | id), data = df_h3, REML = TRUE)
+ci_h3 <- confint(m_h3, parm = "pixel_dist", method = "Wald")
+cf_h3 <- lmer_coef(m_h3, "pixel_dist")
+
+print_one_sided("H3: Map distance predicts pairwise similarity",
+                cf_h3$beta, cf_h3$se, cf_h3$t, cf_h3$df,
+                direction = "negative", ci = ci_h3)
+
+```
+
+### H4
+\paragraph{H4. The closest pair on the map is rated most similar and the farthest pair is rated least similar} 
+
+Consider $(ij)^{min}$ the pair of individuals $i$ and $j$ with the smallest distance on participant $n$'s political map and $(ij)^{max}$ the pair with the largest distance on the map. The similarity difference between these two pairs 
+\begin{equation}
+    \Delta s_{max} = s_{n,(ij)^{min}} - s_{n,(ij)^{max}}  \ .
+\end{equation}
+
+The prediction is $\Delta s_{max} > 0$ (standard t-test with $\alpha=0.05$).
+The closest pair on the map receives a higher similarity rating than the farthest pair.
+
+```{r}
+#| label: H4
+
+df_h4_wide <- df_diff |>
+  filter(wave %in% c(1, 2),
+         minPixelDistance_pair_dummy == "True" | maxPixelDistance_pair_dummy == "True") |>
+  select(id, wave, maxPixelDistance_pair_dummy, pairwise_similarity) |>
+  pivot_wider(
+    id_cols    = c(id, wave),
+    names_from = maxPixelDistance_pair_dummy,
+    values_from = pairwise_similarity
+  ) |>
+  rename(sim_min = "False", sim_max = "True") |>
+  mutate(diff = sim_min - sim_max)
+
+t_h4 <- t.test(df_h4_wide$diff, mu = 0)
+
+cat("=== H4: Closest pair rated most similar ===\n")
+cat(sprintf("  Mean(sim_min) = %.4f ± %.4f\n", mean(df_h4_wide$sim_min), sd(df_h4_wide$sim_min)))
+cat(sprintf("  Mean(sim_max) = %.4f ± %.4f\n", mean(df_h4_wide$sim_max), sd(df_h4_wide$sim_max)))
+cat(sprintf("  Mean diff     = %.4f\n",          mean(df_h4_wide$diff)))
+cat(sprintf("  t             = %.4f\n",           t_h4$statistic))
+cat(sprintf("  p (one-sided) = %.4f\n",           t_h4$p.value / 2))
+cat(sprintf("  Supported     : %s\n\n",
+            ifelse(t_h4$statistic > 0 && t_h4$p.value / 2 < 0.05, "YES", "NO")))
+
+```
+
+### H5 
+
+\paragraph{H5. The inferred issue weights are robust across waves.}
+
+We test the reliability of our tool by comparing the similarity of issue weights, $\alpha_{n,q}$, of participants in wave 1 vs.~wave 2 (control condition) with the similarity of issue weights between participants. 
+\begin{eqnarray}
+  \overline{\Delta \alpha_q}_{\mathrm{within}} & = & \mathbb{E} \left[ \lvert \alpha_{n,q}(\mathrm{wave}\,2) - \alpha_{n,q}(\mathrm{wave}\,1) \rvert  \right]
+\qquad \text{ and } \\
+  \overline{\Delta \alpha_q}_{\mathrm{between}} & = & \mathbb{E} \left[ \lvert \alpha_{n,q}(\mathrm{wave}\,2) - \alpha_{m,q}(\mathrm{wave}\,1/\mathrm{wave}\, 2)  \rvert  \right] \qquad \text{ with }m\neq n
+\end{eqnarray}
+
+ERROR: It should be: $\overline{\Delta \alpha_q}_{\mathrm{within}} - \overline{\Delta \alpha_q}_{\mathrm{between}} < 0$
+
+The prediction is that $\overline{\Delta \alpha_q}_{\mathrm{within}} - \overline{\Delta \alpha_q}_{\mathrm{between}} > 0$ (one-sample t-test with $\alpha=0.05$). Participants' issue weights in wave 2 are more similar to their own issue weights in the previous wave than to those of other participants in wave 1 or wave 2 (in the control condition). 
+
+```{r}
+#| label: H5
+
+k          <- "exp"
+alpha_cols <- paste0(k, "_alpha_", questions_sc)
+
+ctrl_ids_h5 <- df_p |>
+  filter(id %in% inds_bothwaves, wave == 2, treatment_wave2 == "0") |>
+  pull(id)
+
+df_h5 <- df_p |>
+  filter(if_all(all_of(alpha_cols), Negate(is.na)), id %in% ctrl_ids_h5) |>
+  select(id, wave, all_of(alpha_cols))
+
+ids_both <- intersect(
+  df_h5 |> filter(wave == 1) |> pull(id),
+  df_h5 |> filter(wave == 2) |> pull(id)
+)
+df_h5 <- df_h5 |> filter(id %in% ids_both)
+
+w1_mat <- df_h5 |> filter(wave == 1) |> arrange(id) |> select(all_of(alpha_cols)) |> as.matrix()
+w2_mat <- df_h5 |> filter(wave == 2) |> arrange(id) |> select(all_of(alpha_cols)) |> as.matrix()
+n      <- nrow(w1_mat)
+
+within_means  <- rowMeans(abs(w2_mat - w1_mat))
+between_means <- vapply(seq_len(n), \(i) {
+  mean(rowMeans(abs(sweep(w2_mat[-i, , drop = FALSE], 2, w1_mat[i, ]))))
+}, numeric(1))
+
+delta    <- within_means - between_means
+t_h5     <- t.test(delta, mu = 0, alternative = "two.sided")
+cohens_d <- mean(delta) / sd(delta)
+
+cat("=== H5: Issue weights reliable across waves ===\n")
+cat(sprintf("  Within  (mean ± sd) = %.4f ± %.4f\n", mean(within_means), sd(within_means)))
+cat(sprintf("  Between (mean ± sd) = %.4f ± %.4f\n", mean(between_means), sd(between_means)))
+cat(sprintf("  Delta   (mean)      = %.4f\n",          mean(delta)))
+cat(sprintf("  Cohen's d           = %.4f\n",          cohens_d))
+cat(sprintf("  t                   = %.4f\n",           t_h5$statistic))
+cat(sprintf("  p (two-sided)       = %.4f\n",           t_h5$p.value))
+cat(sprintf("  p (one-sided)       = %.4f\n",           t_h5$p.value / 2))
+cat(sprintf("  Supported           : %s\n\n",
+            ifelse(t_h5$statistic < 0 && t_h5$p.value / 2 < 0.05, "YES", "NO")))
+```
+
+
+### Exploration
+
+\paragraph{Explorative Analyses.} In addition to the preregistered hypotheses above, we will explore how people rate the political mapping task against the pairwise similarity task in terms of difficulty and enjoyment, how satisfied they are with the political map, and how much time they needed for each task. 
+
+```{r}
+#| label: Aim1-Exploration
+# (see 03_data-overview)
+```
+
+
+## Aim 2
+\subsection*{Aim 2: Identify patterns linked to (political) identity} 
+
+In this section, we hypothesise that demographic and identity-related variables, including party preference, ${party}_n$, left-right placement, ${lr}_n$, age, ${age}_n$, or combinations of them moderate the relationship between belief differences and issue weights.
+
+### H6
+
+\paragraph{H6. Party preference predicts issue weights.} 
+We model the (normalised) issue weights for each issue $q$ as
+\begin{equation}
+    \alpha_{n,q} = 1/6 + \sum_r \beta_{r,q} \cdot \mathbb{I}[\text{party}_n = r] + u_q + \epsilon_{n,q}
+\end{equation}
+where $\mathbb{I}[\text{party}_n = r]$ are dummy variables for each party $r$ (with one party as reference category), $\beta_{r,q}$ is the effect of party $r$ on weight assigned to issue $q$, $u_q$ is the average deviation of the weight for issue $q$, and $\epsilon_{n,q}$ is the individual- and issue-specific error. 
+
+The prediction is $\beta_{r,q} \neq 0$ and $\beta_{r1,q}\neq\beta_{r2,q}$ for at least some parties $r1$ and $r2$. 
+Participants affiliated with different parties differ in how strongly they weigh different political issues when mapping individuals. 
+
+
+#### Interpretation 1: Do parties differ across issues?
+
+For correlations (unconstrained):
+```{r}
+#| label: H6
+
+# Helper: run H6 for one weight type and print verdict
+run_h6 <- function(k, use_lmer = TRUE) {
+  alpha_cols <- paste0(k, "_alpha_", questions_sc)
+
+  df_h6 <- df_p |>
+    filter(wave %in% c(1, 2)) |>
+    select(id, wave, party_close, all_of(alpha_cols)) |>
+    filter(party_close %in% c(partiesCloseSel, "No party")) |>
+    pivot_longer(
+      cols         = all_of(alpha_cols),
+      names_to     = "issue",
+      names_prefix = paste0(k, "_alpha_"),
+      values_to    = "alpha_q"
+    ) |>
+    filter(!is.na(party_close), !is.na(alpha_q)) |>
+    mutate(
+      party_close = relevel(factor(party_close), ref = "No party"),
+      issue       = relevel(factor(issue),       ref = "climate_concern"),
+      wave        = factor(wave)
+    )
+
+  if (use_lmer) {
+    m_null <- lmer(alpha_q ~ issue + wave + (1 | id),               data = df_h6)
+    m_full <- lmer(alpha_q ~ party_close * issue + wave + (1 | id), data = df_h6)
+    wt     <- anova(m_null, m_full)
+    stat   <- wt$Chisq[2]; df_num <- wt$Df[2]; p <- wt$`Pr(>Chisq)`[2]
+    print_fit_table("Null" = m_null, "Full" = m_full)
+    print_lrt(sprintf("H6 (%s): party × issue interaction", k),
+              stat, df_num, p = p, type = "chi2")
+  } else {
+    m_null <- lm(alpha_q ~ issue + wave,               data = df_h6)
+    m_full <- lm(alpha_q ~ party_close * issue + wave, data = df_h6)
+    wt     <- anova(m_null, m_full)
+    stat   <- wt$F[2]; df_num <- wt$Df[2]; df_den <- wt$Res.Df[2]; p <- wt$`Pr(>F)`[2]
+    # clustered-SE model for coefficient display
+    m_full_rob <- lm_robust(alpha_q ~ party_close * issue + wave,
+                            data = df_h6, clusters = id, se_type = "CR2")
+    cat(sprintf("\nR^2  Null = %.3f  |  Full = %.3f\n",
+                summary(m_null)$r.squared, summary(m_full)$r.squared))
+    print_lrt(sprintf("H6 (%s): party × issue interaction", k),
+              stat, df_num, df_den, p, type = "F")
+  }
+}
+
+run_h6("corrS", use_lmer = TRUE)
+run_h6("exp",   use_lmer = FALSE)
+```
+
+And for exponential/linear weights (constrained):
+```{r}
+#| label: H6-per-issue
+
+# Per-issue breakdown (both weight types)
+run_h6_per_issue <- function(k, use_lmer = TRUE) {
+  cat(sprintf("\n-- H6 per issue (%s) --\n", k))
+
+  purrr::walk(questions_sc, \(q) {
+    alpha_col <- paste0(k, "_alpha_", q)
+    df_q <- df_p |>
+      filter(wave %in% c(1, 2)) |>
+      select(id, wave, party_close, alpha_q = all_of(alpha_col)) |>
+      filter(party_close %in% c(partiesCloseSel, "No party"), !is.na(alpha_q)) |>
+      mutate(party_close = relevel(factor(party_close), ref = "No party"),
+             wave        = factor(wave))
+
+    if (use_lmer) {
+      m      <- lmer(alpha_q ~ party_close + wave + (1 | id), data = df_q)
+      m_null <- lmer(alpha_q ~ wave + (1 | id),               data = df_q)
+      wt     <- anova(m_null, m)
+      p      <- wt$`Pr(>Chisq)`[2]; chi <- wt$Chisq[2]; df_lrt <- wt$Df[2]
+      r2v    <- r2(m)
+      cat(sprintf("\n%s  R^2=%.3f/%.3f  LRT chi^2(%d)=%.2f  p=%.4f %s\n",
+                  q, r2v$R2_marginal, r2v$R2_conditional,
+                  df_lrt, chi, p, sig_stars(p)))
+    } else {
+      m      <- lm_robust(alpha_q ~ party_close + wave, data = df_q,
+                          clusters = id, se_type = "CR2")
+      m_lm   <- lm(alpha_q ~ party_close + wave, data = df_q)
+      m_null <- lm(alpha_q ~ wave,               data = df_q)
+      wt     <- anova(m_null, m_lm)
+      p      <- wt$`Pr(>F)`[2]; f <- wt$F[2]
+      cat(sprintf("\n%s  R^2=%.3f  F(%d,%d)=%.2f  p=%.4f %s\n",
+                  q, summary(m_lm)$r.squared,
+                  wt$Df[2], wt$Res.Df[2], f, p, sig_stars(p)))
+    }
+  })
+}
+
+run_h6_per_issue("corrS", use_lmer = TRUE)
+run_h6_per_issue("exp",   use_lmer = FALSE)
+```
+
+
+### H7 
+
+\paragraph{H7. Left-Right placement predicts issue weights.} 
+
+We model the issue weights for each issue $q$ as
+\begin{equation}
+    \alpha_{n,q} = 1/6 + \beta_{q}  \cdot {lr}_n  + u_q + \epsilon_{n,q} 
+\end{equation}
+with continuous variable $\mathrm{lr}_n$ between `left' ($-5$) and `right' ($5$).
+We estimate this model jointly across all six issues. 
+% beta_0 is average. Because alpha is normalised: beta_0 = 1/6
+% lr_n is explanatory variable
+% u_q is average deviation of the weight for issue q
+% eps_{nq} is individual specific error for this question and this individual.
+
+The prediction is $\beta_q\neq 0$. 
+Left and right participants differ in how strongly they weigh different political issues when mapping individuals. 
+%We test this via a single F-test on the joint significance of $\{\beta_q\}$, with significance threshold $\alpha = 0.05$.
+
+```{r}
+#| label: H7
+
+k <- "exp"
+
+cat("=== H7: Left-right placement predicts issue weights ===\n\n")
+
+# Per-issue
+purrr::walk(questions_sc, \(q) {
+  df_q <- df_p |>
+    filter(wave %in% c(1, 2)) |>
+    select(id, wave, lr, alpha_q = all_of(paste0(k, "_alpha_", q))) |>
+    filter(!is.na(alpha_q))
+  m  <- lmer(alpha_q ~ lr + wave + (1 | id), data = df_q)
+  cf <- lmer_coef(m, "lr")
+  cat(sprintf("  %-35s  beta=%.4f  t=%.3f  p=%.4f  %s\n",
+              q, cf$beta, cf$t, cf$p2, sig_stars(cf$p2)))
+})
+
+# Joint model (LRT)
+df_long_h7 <- df_p |>
+  filter(wave %in% c(1, 2)) |>
+  select(id, wave, lr, starts_with(paste0(k, "_alpha_"))) |>
+  pivot_longer(starts_with(paste0(k, "_alpha_")),
+               names_to = "issue", values_to = "alpha") |>
+  mutate(issue = gsub(paste0(k, "_alpha_"), "", issue), issue = factor(issue)) |>
+  filter(!is.na(alpha))
+
+m_full_h7 <- lmer(alpha ~ issue + issue:lr + wave + (1 | id), data = df_long_h7)
+m_null_h7 <- lmer(alpha ~ issue + wave + (1 | id),            data = df_long_h7)
+wt_h7     <- anova(m_null_h7, m_full_h7)
+
+cat("\n")
+print_lrt("H7 joint: lr × issue",
+          wt_h7$Chisq[2], wt_h7$Df[2], p = wt_h7$`Pr(>Chisq)`[2], type = "chi2")
+
+```
+
+### H8
+\paragraph{H8. Age predicts issue weights.} 
+We model the issue weights for each issue $q$ as
+\begin{equation}
+    \alpha_{n,q} = 1/6 + \beta_q  \cdot {age}_n + u_q + \epsilon_{n,q}
+\end{equation}
+
+The prediction is $\beta_q\neq 0$. Older and younger participants differ in how strongly they weigh different political issues when mapping individuals. 
+
+
+```{r}
+#| label: H8
+
+k <- "exp"
+
+cat("=== H8: Age predicts issue weights ===\n\n")
+
+purrr::walk(questions_sc, \(q) {
+  df_q <- df_p |>
+    filter(wave %in% c(1, 2)) |>
+    select(id, wave, age, alpha_q = all_of(paste0(k, "_alpha_", q))) |>
+    filter(!is.na(alpha_q), !is.na(age)) |>
+    mutate(age_z = as.numeric(scale(age)))
+  m  <- lmer(alpha_q ~ age_z + wave + (1 | id), data = df_q, REML = FALSE)
+  cf <- lmer_coef(m, "age_z")
+  cat(sprintf("  %-35s  beta=%.4f  t=%.3f  p=%.4f  %s\n",
+              q, cf$beta, cf$t, cf$p2, sig_stars(cf$p2)))
+})
+
+# Joint model
+df_long_h8 <- df_p |>
+  filter(wave %in% c(1, 2), !is.na(age)) |>
+  mutate(age_z = as.numeric(scale(age))) |>
+  select(id, wave, age_z, starts_with(paste0(k, "_alpha_"))) |>
+  pivot_longer(starts_with(paste0(k, "_alpha_")),
+               names_to = "issue", values_to = "alpha") |>
+  mutate(issue = gsub(paste0(k, "_alpha_"), "", issue), issue = factor(issue)) |>
+  filter(!is.na(alpha))
+
+m_full_h8 <- lmer(alpha ~ issue + issue:age_z + wave + (1 | id), data = df_long_h8, REML = FALSE)
+m_null_h8 <- lmer(alpha ~ issue + wave + (1 | id),               data = df_long_h8, REML = FALSE)
+wt_h8     <- anova(m_null_h8, m_full_h8)
+
+cat("\n")
+print_lrt("H8 joint: age × issue",
+          wt_h8$Chisq[2], wt_h8$Df[2], p = wt_h8$`Pr(>Chisq)`[2], type = "chi2")
+```
+
+### Exploration
+\paragraph{Explorative Analyses.} We also model \textbf{H6} to \textbf{H8} with different combinations of party preference, left-right placement, and age of the participants to model participants issue weights $\alpha_{n,q}$. In addition, we model how political interest, $\mathrm{pi}_n$,\ $\mathrm{pf}_n$, interacts with the explanatory variables above.
+
+```{r}
+#| label: Aim2-exploration
+print(" exploration later ")
+```
+
+## Aim 3
+\subsection*{Aim 3: Assess the role of social circle belief variation}
+
+For Aim 3, we test whether including social circle belief variation improves predictions for participants' issue weights (inferred from the map distances), their reported issue importance, likeability of voters, and polarisation perceptions. In addition, we explore how social circle belief improves predictions of the map distances between individuals. 
+
+### H9
+
+\paragraph{H9. Social circle variance predicts issue weights.}
+
+We model issue weights of participant $n$ as
+\begin{equation}
+    \alpha_{n,q} = 1/6 + \beta_q \cdot \mathrm{var}_{n,q} + u_q + \epsilon_{n,q} \ .
+\end{equation}
+
+The prediction is $\beta_q<0$. Issues are assigned higher weight when associated with lower social circle variance.
+
+
+\begin{minipage}{\linewidth}
+\color{red} \textbf{CHANGE TO PREREG: I am using standard deviation instead of variance now!!!}
+\end{minipage}
+
+
+```{r}
+#| label: H9
+
+run_h9 <- function(k = "exp", variance_type = "std") {
+  var_col <- paste0(variance_type, "_socialCircle_ops")
+
+  df_h9 <- df_p |>
+    filter(wave %in% c(1, 2)) |>
+    pivot_longer(
+      cols          = matches(paste0("^(", var_col, "|", k, "_alpha)_")),
+      names_to      = c(".value", "issue"),
+      names_pattern = paste0("^(", var_col, "|", k, "_alpha)_(.*)")
+    ) |>
+    rename(var_sc = all_of(var_col), alpha = all_of(paste0(k, "_alpha"))) |>
+    filter(!is.na(alpha), !is.na(var_sc))
+
+  m  <- lmer(alpha ~ var_sc + wave + (1 | issue), data = df_h9)
+  cf <- lmer_coef(m, "var_sc")
+  print_one_sided(
+    sprintf("H9: Social circle %s predicts issue weights (%s)", variance_type, k),
+    cf$beta, cf$se, cf$t, direction = "negative"
+  )
+
+  # Per-issue
+  cat("Per-issue breakdown:\n")
+  purrr::walk(questions_sc, \(q) {
+    df_q <- df_p |>
+      filter(wave %in% c(1, 2)) |>
+      select(id, wave,
+             var_sc = all_of(paste0(var_col, "_", q)),
+             alpha  = all_of(paste0(k, "_alpha_", q))) |>
+      filter(!is.na(alpha), !is.na(var_sc))
+    m_q  <- lmer(alpha ~ var_sc + wave + (1 | id), data = df_q)
+    cf_q <- lmer_coef(m_q, "var_sc")
+    cat(sprintf("  %-35s  beta=%7.4f  t=%6.3f  p=%.4f  %s\n",
+                q, cf_q$beta, cf_q$t, cf_q$p2, sig_stars(cf_q$p2)))
+  })
+  cat("\n")
+}
+
+run_h9("exp",   "std")
+run_h9("corrS", "std")
+```
+
+```{r}
+#| label: H9-plot
+
+k <- "exp"; variance_type <- "std"
+df_h9_plot <- df_p |>
+  filter(wave %in% c(1, 2)) |>
+  pivot_longer(
+    cols          = matches(paste0("^(std_socialCircle_ops|", k, "_alpha)_")),
+    names_to      = c(".value", "issue"),
+    names_pattern = paste0("^(std_socialCircle_ops|", k, "_alpha)_(.*)")
+  ) |>
+  rename(var_sc = std_socialCircle_ops, alpha = all_of(paste0(k, "_alpha"))) |>
+  filter(!is.na(alpha), !is.na(var_sc))
+
+ggplot(df_h9_plot, aes(x = var_sc, y = alpha)) +
+  geom_point(alpha = 0.2, size = 0.4) +
+  geom_smooth(method = "lm", se = TRUE, color = "steelblue") +
+  facet_wrap(~ issue, ncol = 3) +
+  labs(title = sprintf("H9: Social circle %s vs %s alpha", variance_type, k),
+       x = sprintf("Social circle %s (normalised)", variance_type), y = "Alpha") +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 7))
+ggsave(sprintf("h9_plot_%s_%s.png", k, variance_type), width = 16/2.54, height = 9/2.54)
+
+```
+
+
+
+
+### H10
+
+\paragraph{H10. Social circle variance predicts reported issue importance.}
+
+We model reported issue importance of participant $n$ as
+\begin{equation}
+w_{n,q} = \beta_0 + \beta_q \cdot \mathrm{var}_{n,q} + u_q + v_n + \epsilon_{n,q} \ .
+\end{equation}
+where $v_n$ is the average importance of all issues assigned by participant $n$.
+
+The prediction is $\beta_q<0$. Issues are rated as more important when social circle variance is smaller.
+
+
+```{r}
+#| label: H10
+
+variance_type <- "std"
+var_col       <- paste0(variance_type, "_socialCircle_ops")
+
+df_h10 <- df_p |>
+  filter(wave %in% c(1, 2)) |>
+  pivot_longer(
+    cols          = c(all_of(paste0("w_", questions_sc)),
+                      all_of(paste0(var_col, "_", questions_sc))),
+    names_to      = c(".value", "issue"),
+    names_pattern = paste0("^(", var_col, "|w)_(.*)")
+  ) |>
+  rename(var_sc = all_of(var_col))
+
+m_h10 <- lmer(w ~ var_sc + wave + (1 | issue) + (1 | id), data = df_h10)
+cf_h10 <- lmer_coef(m_h10, "var_sc")
+
+print_one_sided(
+  sprintf("H10: Social circle %s predicts reported issue importance", variance_type),
+  cf_h10$beta, cf_h10$se, cf_h10$t, direction = "negative"
+)
+
+# Per-issue
+cat("Per-issue breakdown:\n")
+purrr::walk(questions_sc, \(q) {
+  df_q <- df_h10 |> filter(issue == q) |> select(id, wave, issue, w, var_sc)
+  m_q  <- lmer(w ~ var_sc + wave + (1 | id), data = df_q)
+  cf_q <- lmer_coef(m_q, "var_sc")
+  cat(sprintf("  %-35s  beta=%7.4f  t=%6.3f  p=%.4f  %s\n",
+              q, cf_q$beta, cf_q$t, cf_q$p2, sig_stars(cf_q$p2)))
+})
+
+ggplot(df_h10, aes(x = var_sc, y = w, color = issue)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(x = "Social circle variance", y = "Importance",
+       title = sprintf("H10: Social circle %s vs relative importance", variance_type)) +
+  theme_minimal()
+```
+
+### H11
+
+\paragraph{H11. Overall social circle variance helps predict likeability rating of typical voters.}
+
+In H2 (equation \ref{eq:symp_base}), we modelled the participant $n$'s likeability rating of the typical voter of political party $r$ as 
+\begin{equation} \label{eq:likingbase}
+    y_{n,r} = \beta_0 + \beta_1 \cdot d_{n,\mathrm{self}-r} + u_n + \epsilon_{n,r}.
+\end{equation}
+
+Here, we extend this model as
+\begin{equation} \label{eq:liking}
+    y_{n,r} = \beta_0 + \beta_1 \cdot d_{n,\mathrm{self}-r} + \beta_2 \cdot \sum_q \mathrm{var}_{n,q} + v_n + \epsilon_{n,r}
+\end{equation}
+where the new $\beta_2$-term represents the influence of overall social circle belief variation on likeability.
+
+The prediction is $\beta_2>0$ and that equation \ref{eq:liking} improves the predictions of the baseline model from \textbf{H2} (equation \ref{eq:symp_base}/\ref{eq:likingbase}) using R2, AIC, and BIC as model quality indicators. Voters are more liked in general if the participant's overall social circle variance is higher.
+
+\begin{minipage}{\linewidth}
+{\color{red} TODO: This hypothesis is kind of wrong. We have 1 avgsocialcirclestd per person and 7 pixeldist and sympathy for 7 parties. But the avgsocialcirclestd is already included in the random intercept.
+\begin{equation} \label{eq:liking}
+    y_{n,r} = \beta_0 + \beta_1 \cdot d_{n,\mathrm{self}-r} + \beta_2 \cdot \sum_q \mathrm{var}_{n,q} {REMOVED (+ v_n)} + \epsilon_{n,r}
+\end{equation}
+}
+\end{minipage}
+
+```{r}
+#| label: H11
+
+variance_type <- "std"
+
+avg_var_sc <- df_p |>
+  filter(wave == 2) |>
+  select(id, all_of(paste0(variance_type, "_socialCircle_ops_", questions_sc))) |>
+  drop_na() |>
+  mutate(avg_var_sc = rowMeans(across(everything(), .names = NULL))) |>
+  select(id, avg_var_sc)
+
+df_h11 <- df_diff |>
+  filter(dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
+  select(id, sympathy, party, pixel_dist) |>
+  left_join(avg_var_sc, by = "id") |>
+  mutate(pixel_dist_z = as.numeric(scale(pixel_dist)),
+         avg_var_sc_z = as.numeric(scale(avg_var_sc)))
+
+m_base_h11 <- lmer(sympathy ~ pixel_dist_z + (1 | id),
+                   data = df_h11, REML = FALSE)
+m_ext_h11  <- lmer(sympathy ~ pixel_dist_z + avg_var_sc_z + (1 | id),
+                   data = df_h11, REML = FALSE)
+
+cf_h11 <- lmer_coef(m_ext_h11, "avg_var_sc_z")
+
+# One-sided test: H1 = avg_var_sc_z has a positive effect
+p_one_h11 <- if (cf_h11$beta > 0) {
+  cf_h11$p2 / 2
+} else {
+  1 - cf_h11$p2 / 2
+}
+
+r2_base <- r2(m_base_h11)
+r2_ext  <- r2(m_ext_h11)
+
+cat("=== H11: Social circle variance predicts likeability (beyond map distance) ===\n")
+cat(sprintf(" beta (pixel_dist) = %.4f\n",
+            fixef(m_ext_h11)["pixel_dist_z"]))
+cat(sprintf(" beta (avg_var_sc) = %.4f\n",
+            cf_h11$beta))
+cat(sprintf(" SE = %.4f\n",
+            cf_h11$se))
+cat(sprintf(" t = %.4f\n",
+            cf_h11$t))
+cat(sprintf(" df (Satterthwaite) = %.2f\n",
+            cf_h11$df))
+cat(sprintf(" p (two-sided) = %.6f\n",
+            cf_h11$p2))
+cat(sprintf(" p (one-sided, beta > 0) = %.6f\n",
+            p_one_h11))
+cat(sprintf(" Supported: %s\n",
+            ifelse(p_one_h11 < 0.05 && cf_h11$beta > 0,
+                   "YES", "NO")))
+cat(sprintf(" R² marginal base/ext = %.4f / %.4f (Delta=%+.4f)\n",
+            r2_base$R2_marginal,
+            r2_ext$R2_marginal,
+            r2_ext$R2_marginal - r2_base$R2_marginal))
+cat(sprintf(" R² conditional base/ext = %.4f / %.4f (Delta=%+.4f)\n",
+            r2_base$R2_conditional,
+            r2_ext$R2_conditional,
+            r2_ext$R2_conditional - r2_base$R2_conditional))
+cat(sprintf(" AIC base/ext = %.2f / %.2f (Delta=%+.2f)\n",
+            AIC(m_base_h11),
+            AIC(m_ext_h11),
+            AIC(m_ext_h11) - AIC(m_base_h11)))
+cat(sprintf(" BIC base/ext = %.2f / %.2f (Delta=%+.2f)\n\n",
+            BIC(m_base_h11),
+            BIC(m_ext_h11),
+            BIC(m_ext_h11) - BIC(m_base_h11)))
+```
+
+### H12a
+
+
+\paragraph{H12a. Social circle variance predicts perceived political polarisation on a given issue.}
+
+We model perceived polarisation on issue $q$ as
+\begin{equation}
+    P_{n,q} = \beta_0 + \beta_q \cdot {var}_{n,q} + u_n + \epsilon_{n,q}.
+\end{equation}
+
+The prediction is $\beta_q < 0$. 
+Participants with less variation in their social circles with respect to issue $q$ perceive higher polarisation on that issue. %We test this via a single F-test on the joint significance of $\{\beta_q\}$, with significance threshold $\alpha = 0.05$.
+
+
+```{r}
+#| label: H12a
+#| 
+variance_type <- "std"
+var_col       <- paste0(variance_type, "_socialCircle_ops")
+
+df_h12a <- df_p |>
+  filter(wave %in% c(1, 2)) |>
+  select(-P_tot) |>
+  pivot_longer(
+    cols          = c(all_of(paste0("P_", questions_sc)),
+                      all_of(paste0(var_col, "_", questions_sc))),
+    names_to      = c(".value", "issue"),
+    names_pattern = paste0("^(", var_col, "|P)_(.*)")
+  ) |>
+  rename(var_sc = all_of(var_col))
+
+m_h12a <- lmer(P ~ var_sc + wave + (1 | issue) + (1 | id), data = df_h12a)
+cf_h12a <- lmer_coef(m_h12a, "var_sc")
+
+print_one_sided(
+  sprintf("H12a: Social circle %s predicts perceived polarisation (per issue)", variance_type),
+  cf_h12a$beta, cf_h12a$se, cf_h12a$t, direction = "negative"
+)
+
+ggplot(df_h12a, aes(x = var_sc, y = P, color = issue)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(x = sprintf("Social circle %s", variance_type), y = "Polarisation",
+       title = sprintf("H12a: Social circle %s vs issue polarisation", variance_type)) +
+  theme_minimal()
+
+```
+
+### H12b
+
+
+\paragraph{H12b. Social circle variance predicts perceived political polarisation.}
+
+We model overall perceived polarisation as
+\begin{equation}
+    P_{n,tot} = \beta_0 + \beta_1 \cdot \sum_q {var}_{n,q} + \epsilon_{n}.
+\end{equation}
+
+The prediction is $ \beta_1 < 0$. 
+Participants with less variation in their social circles averaged over all issues perceive more political polarisation. 
+%We test this via a t-test with significance threshold $\alpha = 0.05$.
+
+```{r}
+#| label: H12b
+
+df_h12b <- df_p |>
+  select(id, wave, all_of(paste0(variance_type, "_socialCircle_ops_", questions_sc)), P_tot) |>
+  drop_na() |>
+  mutate(avg_var_sc = rowSums(across(all_of(paste0(variance_type, "_socialCircle_ops_", questions_sc)))))
+
+m_h12b   <- lmer(P_tot ~ avg_var_sc + (1 | id), data = df_h12b, REML = TRUE)
+n_p_h12b <- n_distinct(df_h12b$id)
+cf_h12b  <- lmer_coef(m_h12b, "avg_var_sc")
+t_h12b   <- cf_h12b$beta / cf_h12b$se
+
+print_one_sided(
+  "H12b: Overall social circle variance predicts total perceived polarisation",
+  cf_h12b$beta, cf_h12b$se, t_h12b, df = n_p_h12b - 2,
+  direction = "negative"
+)
+
+ggplot(df_h12b, aes(x = avg_var_sc, y = P_tot)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(x = sprintf("Avg social circle %s", variance_type), y = "Total polarisation",
+       title = sprintf("H12b: Social circle %s vs total polarisation", variance_type)) +
+  theme_minimal()
+```
+
+
+### H13 
+\paragraph{H13. Reported issue importance predicts perceived distance.}
+
+In equation \ref{eq:weighted}, we fix the issue weights to $\alpha_{n,q} = w_{n,q}$. Then, we model the perceived distance between two individuals $i$ and $j$ (using the exponential kernel; see equations \ref{eq:distance} and \ref{eq:expkernel}) as
+\begin{equation}
+    d_{n, ij} = 1- \exp{\left(-\hat b_n \cdot \left(\sum_q w_{n,q} \cdot \rvert x_{n,i,q} - x_{n,j,q}\rvert\right)^{\hat c_n}\right)}
+\end{equation}
+with fit parameters $\hat b_n$, and $\hat c_n$. 
+
+The prediction is that this model (with $\hat\alpha_{n,q} = w_{n,q}$) outperforms (i) an unweighted model with $\hat\alpha_{n,q}=1/6$ and (ii) a population weight model with $\hat\alpha_{n,q} = 1/n \cdot \sum_n w_{n,q}$. We use R2, AIC, and BIC as model quality indicators.
+
+
+```{r}
+#| label: H13-setup
+
+linear_kernel <- function(x, a, b) a + b * x
+exp_kernel    <- function(x, a, b) 1 - exp(-a * (x ^ b))
+r2_vec        <- function(y, pm) {
+  ss_tot <- sum((y - mean(y, na.rm = TRUE))^2, na.rm = TRUE)
+  1 - colSums((pm - y)^2, na.rm = TRUE) / ss_tot
+}
+compute_aic_bic <- function(mse, k, n) {
+  rss <- mse * n
+  tibble(aic = n * log(rss / n) + 2 * k, bic = n * log(rss / n) + k * log(n))
+}
+
+alphas_pop_lin <- df_p |> select(all_of(col_alpha_lin)) |> colMeans()
+alphas_pop_exp <- df_p |> select(all_of(col_alpha_exp)) |> colMeans()
+
+df_h13_base <- df_diff |>
+  filter(wave %in% c(1, 2)) |>
+  left_join(df_p |> select(id, wave, all_of(col_weights),
+                            all_of(col_alpha_lin), all_of(col_alpha_exp)),
+            by = c("id", "wave"), suffix = c("", ".drop")) |>
+  select(-ends_with(".drop"))
+
+.d         <- as.matrix(df_h13_base[, col_deltas])
+.a_uniform <- matrix(1 / length(questions_sc), nrow = nrow(df_h13_base), ncol = length(questions_sc))
+.a_pop_exp <- matrix(alphas_pop_exp, nrow = nrow(df_h13_base), ncol = length(questions_sc), byrow = TRUE)
+.a_pop_lin <- matrix(alphas_pop_lin, nrow = nrow(df_h13_base), ncol = length(questions_sc), byrow = TRUE)
+.a_fit_exp <- as.matrix(df_h13_base[, col_alpha_exp])
+.a_fit_lin <- as.matrix(df_h13_base[, col_alpha_lin])
+.a_weights <- {
+  w <- as.matrix(df_h13_base[, col_weights])
+  w_sum <- rowSums(w, na.rm = TRUE)
+  ifelse(w_sum == 0, 0, w / w_sum)
+}
+
+pred_cols <- c("predicted_d_weights", "predicted_d_population_exp",
+               "predicted_d_population_lin", "predicted_d_uniform_exp",
+               "predicted_d_uniform_lin", "predicted_d_fit_linear",
+               "predicted_d_fit_exp")
+
+df_h13 <- df_h13_base |>
+  mutate(
+    predicted_d_uniform_exp    = exp_kernel(   rowSums(.d * .a_uniform), exp_param1,    exp_param2),
+    predicted_d_uniform_lin    = linear_kernel(rowSums(.d * .a_uniform), linear_param1, linear_param2),
+    predicted_d_population_exp = exp_kernel(   rowSums(.d * .a_pop_exp), exp_param1,    exp_param2),
+    predicted_d_population_lin = linear_kernel(rowSums(.d * .a_pop_lin), linear_param1, linear_param2),
+    predicted_d_fit_exp        = exp_kernel(   rowSums(.d * .a_fit_exp), exp_param1,    exp_param2),
+    predicted_d_fit_linear     = linear_kernel(rowSums(.d * .a_fit_lin), linear_param1, linear_param2),
+    predicted_d_weights        = exp_kernel(   rowSums(.d * .a_weights), exp_param1,    exp_param2)
+  ) |>
+  mutate(across(all_of(pred_cols),
+                ~ pixel_dist - .x,
+                .names = "err_{str_remove(.col, 'predicted_d_')}"))
+
+```
+```{r}
+#| label: H13-comparison
+
+y        <- df_h13$pixel_dist
+n_obs    <- sum(!is.na(y))
+n_pw     <- df_h13 |> distinct(id, wave) |> nrow()
+n_q      <- length(questions_sc)
+pred_mat <- df_h13 |> select(all_of(pred_cols)) |> as.matrix()
+colnames(pred_mat) <- str_remove(pred_cols, "predicted_d_")
+
+k_lookup <- tribble(
+  ~model,            ~k,
+  "weights",         2,
+  "population_exp",  2 + n_q,
+  "population_lin",  2 + n_q,
+  "uniform_exp",     2,
+  "uniform_lin",     2,
+  "fit_exp",         (2 + n_q) * n_pw,   
+  "fit_linear",      (2 + n_q) * n_pw
+)
+baseline_sq <- (pred_mat[, "uniform_exp"] - y)^2
+
+comparison_tbl <- tibble(
+  model = colnames(pred_mat),
+  mse   = colMeans((pred_mat - y)^2, na.rm = TRUE),
+  rmse  = sqrt(mse),
+  r2    = r2_vec(y, pred_mat)
+) |>
+  mutate(
+    rel_improve          = (mse[model == "uniform_exp"] - mse) / mse[model == "uniform_exp"],
+    p_wilcox             = map_dbl(model, \(m) {
+      if (m == "uniform_exp") return(NA_real_)
+      wilcox.test((pred_mat[, m] - y)^2, baseline_sq, paired = TRUE)$p.value
+    }),
+    mean_diff_vs_uniform = map_dbl(model, \(m) {
+      if (m == "uniform_exp") return(NA_real_)
+      mean((pred_mat[, m] - y)^2 - baseline_sq, na.rm = TRUE)
+    })
+  ) |>
+  left_join(k_lookup, by = "model") |>
+  mutate(
+    aic_bic = map2(mse, k, ~ compute_aic_bic(.x, .y, n_obs)),
+    aic     = map_dbl(aic_bic, "aic"),
+    bic     = map_dbl(aic_bic, "bic")
+  ) |>
+  select(-aic_bic, -k) |>
+  arrange(mse)
+
+print(comparison_tbl)
+
+
+```
+
+#### Analysis 
+```{r}
+#| label: H13-plots
+
+err_cols <- str_replace(pred_cols, "predicted_d_", "err_")
+
+# Per-participant R^2
+per_person_r2 <- df_h13 |>
+  group_by(id) |>
+  summarise(across(all_of(pred_cols), \(x) {
+    v <- !is.na(x) & !is.na(pixel_dist)
+    if (sum(v) < 3) return(NA_real_)
+    ss_res <- sum((pixel_dist[v] - x[v])^2)
+    ss_tot <- sum((pixel_dist[v] - mean(pixel_dist[v]))^2)
+    if (ss_tot == 0) NA_real_ else 1 - ss_res / ss_tot
+  }, .names = "r2_{.col}")) |>
+  pivot_longer(starts_with("r2_"), names_to = "model", values_to = "r2") |>
+  mutate(model = str_remove(model, "r2_predicted_d_"))
+
+p1 <- ggplot(per_person_r2, aes(x = reorder(model, r2, median, na.rm = TRUE), y = r2)) +
+  geom_boxplot(outlier.alpha = 0.8, outlier.size = 0.2) +
+  stat_summary(fun = mean, geom = "point", shape = 15, size = 3, colour = "red") +
+  geom_hline(yintercept = 0, colour = "red", linetype = "dashed") +
+  coord_flip() + ylim(-2, 1) +
+  labs(title = "H13: Per-participant R^2", x = NULL, y = expression(R^2)) +
+  theme_minimal()
+
+# Predicted vs observed
+p2 <- df_h13 |>
+  slice_sample(n = 10000) |>
+  select(pixel_dist, all_of(pred_cols)) |>
+  pivot_longer(-pixel_dist, names_to = "model", values_to = "predicted") |>
+  mutate(model = str_remove(model, "predicted_d_")) |>
+  ggplot(aes(pixel_dist, predicted)) +
+  geom_point(alpha = 0.05, size = 0.3) +
+  geom_abline(slope = 1, intercept = 0, colour = "red") +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), se = FALSE, colour = "steelblue") +
+  facet_wrap(~ model, ncol = 4) + ylim(0, 1) + coord_equal() +
+  labs(title = "H13: Predicted vs observed") + theme_minimal()
+
+# Participant-level MSE
+p3 <- df_h13 |>
+  group_by(id) |>
+  summarise(across(all_of(str_replace(pred_cols, "predicted_d_", "err_")),
+                   \(x) mean(x^2, na.rm = TRUE))) |>
+  pivot_longer(-id, names_to = "model", values_to = "mse") |>
+  mutate(model = str_remove(model, "^err_")) |>
+  ggplot(aes(x = reorder(model, mse, median), y = mse)) +
+  geom_boxplot(outlier.alpha = 0.15) +
+  coord_flip() + ylim(0, 0.1) +
+  labs(title = "H13: Participant-level MSE", x = NULL, y = "MSE") +
+  theme_minimal()
+
+p1; p2; p3
+
+```
+
+
+
+\paragraph{Explorative Analyses.} 
+
+In addition to the preregistered hypotheses above, we explore several ways to define the function $g_n$ (equation \ref{eq:distance}) which describes the (participant-level) aggregation of belief differences on the six items $q$ between individuals $i$ and $j$ into an overall belief distance.
+
+In particular, we model different functional forms of $g_n$ based on theories about who consider as social context and how this social context shapes their perception of the belief space---which we refer to as a social \textit{lens}. 
+
+%\begin{mybox}{Exploration of different lens models}
+We define three different functional types of aggregation functions $g_n$ with increasing level of complexity. 
+First, a \textbf{simple lens} $\mathcal{S}_n$ is a $6$-dimensional vector that scales (or weighs) each entry in the belief distance vector (equivalent to the weighted metric $g_n$ in Box 1). 
+Second, a \textbf{compression lens} $\mathcal{C}_n$ is a $6$-dimensional vector, which projects the belief difference vector onto a single dimension, e.g.~`liberal' vs.~`conservative', and scales the belief distance in the direction of this dimension. 
+Third, a \textbf{full lens} $\mathcal{F}_n$ is a $6\times 6$ matrix that transforms the belief distance vector into a subjective new space with the same number of dimensions but with rotated and scaled axes.
+Writing these lenses in terms of transformation matrices yields: 
+
+
+\begin{tabular}{cll}
+    1 & simplified lens &  $g_n(|x_{n,i,q} - x_{n,j,q}|) =\norm{\smallpmatrix{\diagdown & \ & 0 \\ \ & \mathcal{S}_n & \ \\ 0 & \ & \diagdown} \circ \smallpmatrix{
+    |x_{n,i,1} - x_{n,j,1}| \\ \vdots \\ |x_{n,i,6} - x_{n,j,6}|
+}}_p$    \\ 
+    2 & compression lens & $g_n(|x_{n,i,q} - x_{n,j,q|}) = \left|{\smallpmatrix{ \text{---}  & \mathcal{C}_n & \text{---} \\ 0 &\ldots & 0  \\ 0& \vdots & 0 } \circ \smallpmatrix{
+    |x_{n,i,1} - x_{n,j,1}| \\ \vdots \\ |x_{n,i,6} - x_{n,j,6}|
+}}\right|$ \\ 
+    3 & full lens & $g_n(|x_{n,i,q} - x_{n,j,q}|) = \norm{\smallpmatrix{
+    \mathcal{F}_{n,11} & \ldots & \mathcal{F}_{n,61} \\  \vdots & \ldots & \vdots \\ \mathcal{F}_{n,61} & \ldots & \mathcal{F}_{n,66}
+} \circ \smallpmatrix{
+    |x_{n,i,1} - x_{n,j,1}| \\ \vdots \\ |x_{n,i,6} - x_{n,j,6}|
+}}_p$ \\ 
+\end{tabular}
+where $\lVert\cdot\rVert_p$ is the p-norm. Here, we choose Minkowski norm $p=1$ or Euclidean norm $p=2$.  
+
+The lenses $\mathcal{S}_n$, $\mathcal{C}_n$, and $\mathcal{F}_n$ of participant $n$ depend on the belief distribution in the participant's social contexts, $x_{n,\mathrm{context}, q}$. We use two ways to define this social contexts:
+\begin{itemize}
+    \item the beliefs of the seven to ten social circle contacts of the participant: $x_{n,\mathrm{context}, q} = \{x_{n,k, q} \ \lvert \ k=1:K_n\}$.
+    \item the beliefs of all the other participants in the participant's in-group, where in-group can mean (i) those who affiliate with the same party, $\{x_{m,\mathrm{self},q} \ \lvert \ m \text{ with } \mathrm{party}_m=\mathrm{party}_n\}$, (ii) those who place themselves in the same region on the left--right scale, (iii) those who have similar demographic attributes, or (iv) combinations thereof.
+\end{itemize}
+Then, we determine participant $n$'s lenses $\ldots$
+\begin{itemize}
+    \item $\mathcal{S}_n$ as the inverse of the standard deviation of the $x_{n,\mathrm{context}, q}$. $\mathcal{S}_n = \left( \frac{1}{\operatorname{Var}(x_{n,\mathrm{context},1})}, \, \ldots, \, \frac{1}{\operatorname{Var}(x_{n,\mathrm{context},6})}\right)$.
+    \item $\mathcal{C}_n$ as the first (loaded) principal components of the social context beliefs. $\mathcal{C}_n = \frac{1}{\sqrt{\lambda_{n,1}}}\nu_{n,1}$. 
+    \item $\mathcal{F}_n$ as a principal component transformation, i.e~as the inverse of the loaded principal component vectors of the social context beliefs. $\mathcal{F}_n = \left(\sqrt{\lambda_{n,1}}\,\nu_{n,1}, \, \ldots, \, \sqrt{\lambda_{n,6}}\,\nu_{n,6}\right)^{-1}$, where $\nu_{n,\tilde{q}}$ are principal components and $\lambda_{n,\tilde{q}}$ the corresponding eigenvalues. 
+\end{itemize}
+
+We predict map distances $d_{n,ij}$ using equation \ref{eq:distance} with different choices of lenses and different definitions of social contexts.
+The goal of this exploration is to investigate to what extent these (theoretical) models and assumptions about participant-level social lenses describe how people perceive political differences between individuals. 
+
+```{r}
+#| label: Aim3-Exploration
+```
+
+## Aim 4
+\subsection*{Aim 4: Test the effects of an intervention on social circle belief variation}
+
+In wave 2, participants are randomly put in (i) a control condition, where they receive the same instruction as in wave 1, namely to choose seven to ten social contacts that they would count to their social circle, or (ii) a treatment condition, where they receive an additional instruction to choose contacts such that they represent a diverse mix of beliefs, if possible. Aim 4 is to test the effects of this instruction.
+
+### H14
+\paragraph{H14. Participants in the treatment condition report higher social circle variance.}
+
+For the participants in the treatment condition $T$, who receive the instruction to choose diverse contacts, we measure the increase in social circle variance on issue $q$ as
+\begin{equation}
+    \Delta \mathrm{var}_T = \sum_q  \left( \mathbb{E}[ \mathrm{var}_{n,q}(w2)  \ \lvert \ \text{condition}_n=T] - \mathbb{E}[ \mathrm{var}_{n,q}(w1) \ \lvert \ \text{condition}_n=T] \right) 
+\end{equation}
+
+The prediction is~$\Delta \mathrm{var}_T >0$ (one-sample t-test with significance threshold $\alpha=0.05$) and $\Delta \mathrm{var}_T >\Delta \mathrm{var}_\mathrm{Control}$ (using independent samples t-test with $\alpha = 0.05$). Social circle variance in the treatment condition $T$ is higher than in wave 1 and higher than in the control group.
+
+
+
+```{r}
+#| label: H14
+
+variance_type <- "std"
+var_col       <- paste0(variance_type, "_socialCircle_ops")
+
+df_h14 <- df_p |>
+  filter(id %in% c(treatment_ids, control_ids)) |>
+  pivot_longer(
+    cols          = matches(paste0(var_col, "_")),
+    names_to      = c(".value", "issue"),
+    names_pattern = paste0("^(", var_col, ")_(.*)")
+  ) |>
+  pivot_wider(id_cols = c(id, issue), names_from = wave,
+              names_prefix = "var_sc_wave", values_from = all_of(var_col)) |>
+  mutate(group = if_else(id %in% treatment_ids, "treatment", "control"),
+         delta = var_sc_wave2 - var_sc_wave1)
+
+cat("=== H14: Treatment increases social circle variance ===\n\n")
+
+# Sanity check
+df_h14 |>
+  group_by(group) |>
+  summarise(mean_w1 = mean(var_sc_wave1, na.rm = TRUE),
+            sd_w1   = sd(var_sc_wave1,   na.rm = TRUE),
+            mean_w2 = mean(var_sc_wave2, na.rm = TRUE),
+            sd_w2   = sd(var_sc_wave2,   na.rm = TRUE),
+            mean_d  = mean(delta,        na.rm = TRUE),
+            n       = n()) |> print()
+
+t_bal <- t.test(var_sc_wave1 ~ group, data = df_h14)
+cat(sprintf("  Balance check (wave1 by group): t=%.3f  p=%.4f\n\n", t_bal$statistic, t_bal$p.value))
+
+trt  <- df_h14 |> filter(group == "treatment")
+ctrl <- df_h14 |> filter(group == "control")
+
+# H14-1: Deltavar_T > 0
+t_h14_1 <- t.test(trt$delta, mu = 0, alternative = "greater")
+cat(sprintf("H14-1 (Deltavar_treatment > 0):\n"))
+cat(sprintf("  Mean delta = %.4f ± %.4f\n", mean(trt$delta, na.rm = TRUE), sd(trt$delta, na.rm = TRUE)))
+cat(sprintf("  t = %.4f,  p (one-sided) = %.4f\n", t_h14_1$statistic, t_h14_1$p.value))
+cat(sprintf("  Supported : %s\n\n", ifelse(t_h14_1$statistic > 0 && t_h14_1$p.value < 0.05, "YES", "NO")))
+
+# H14-2: Deltavar_T > Deltavar_Control
+t_h14_2 <- t.test(delta ~ group, data = df_h14, alternative = "less", var.equal = FALSE)
+cat(sprintf("H14-2 (Deltavar_treatment > Deltavar_control):\n"))
+cat(sprintf("  Mean delta treatment = %.4f ± %.4f\n", mean(trt$delta,  na.rm = TRUE), sd(trt$delta,  na.rm = TRUE)))
+cat(sprintf("  Mean delta control   = %.4f ± %.4f\n", mean(ctrl$delta, na.rm = TRUE), sd(ctrl$delta, na.rm = TRUE)))
+cat(sprintf("  Difference (T - C)   = %.4f\n", mean(trt$delta, na.rm = TRUE) - mean(ctrl$delta, na.rm = TRUE)))
+cat(sprintf("  t = %.4f,  p (one-sided) = %.4f\n", t_h14_2$statistic, t_h14_2$p.value))
+cat(sprintf("  Supported : %s\n\n", ifelse(t_h14_2$statistic < 0 && t_h14_2$p.value < 0.05, "YES", "NO")))
+
+```
+
+
+### H15 
+\paragraph{H15. Higher relative social circle variance decreases issue weight.}
+
+We model the new issue weights, $\alpha_{n,q}(w2)$, inferred in wave 2, of the participants in the treatment condition as 
+\begin{equation}
+    \alpha_{n,q}(w2) = \alpha_{n,q}(w1) + \beta_1 \cdot \mathbb{I}(\text{condition}_n=T) \cdot \frac{\mathrm{var}_{n,q}(w2)  - \mathrm{var}_{n,q}(w1)}{\sum_q \mathrm{var}_{n,q}(w2)  - \mathrm{var}_{n,q}(w1)}    + \epsilon_{n,q}
+\end{equation}
+
+
+The prediction is $\beta_1 <0$. Higher relative social circle variance on one issue decreases the weight of that issue for the participant.
+%We test this via a t-test with significance threshold $\alpha = 0.05$.
+
+\begin{minipage}{\linewidth}
+{\color{red} UPDATE: There should be abs signs in the denominator! Otherwise small delta Var's are going to blow up things dramatically.}
+
+{\color{red} UPDATE: This does not need to depend on the Treatment condition group alone. I analysed both now}
+
+
+{\color{red} OPEN QUESTION: Is the denominator: ${\sum_q |\mathrm{var}_{n,q}(w2)  - \mathrm{var}_{n,q}(w1)|}$ or ${\sum_q |\mathrm{var}_{n,q}(w1)|}$?? I chose the first now because this is what we preregistered.}
+\end{minipage}
+
+```{r}
+#| label: H15
+
+variance_type <- "std"
+k             <- "exp"
+var_col       <- paste0(variance_type, "_socialCircle_ops")
+
+# Variance change per participant per issue
+df_h15_var <- df_p |>
+  pivot_longer(cols = matches(paste0(var_col, "_")),
+               names_to  = c(".value", "issue"),
+               names_pattern = paste0("^(", var_col, ")_(.*)")) |>
+  rename(var_sc = all_of(var_col)) |>
+  pivot_wider(id_cols = c(id, issue), names_from = wave,
+              names_prefix = "w", values_from = var_sc) |>
+  rename(var_w1 = w1, var_w2 = w2) |>
+  mutate(delta_var = var_w2 - var_w1) |>
+  group_by(id) |>
+  mutate(
+    sum_delta_var = sum(abs(delta_var), na.rm = TRUE),
+    # ⚠️ denominator is Σ|Deltavar| (preregistered); see note in LaTeX about alternatives
+    rel_delta_var = if_else(sum_delta_var > 0.05, delta_var / sum_delta_var, NA_real_)
+  ) |>
+  ungroup()
+
+# Alpha weights across waves
+df_h15_alpha <- df_p |>
+  pivot_longer(cols = matches(paste0("^", k, "_alpha_")),
+               names_to  = c(".value", "issue"),
+               names_pattern = paste0("^(", k, "_alpha)_(.*)")) |>
+  pivot_wider(id_cols = c(id, issue), names_from = wave,
+              names_prefix = "alpha_w", values_from = all_of(paste0(k, "_alpha")))
+
+df_h15 <- df_h15_var |>
+  left_join(df_h15_alpha, by = c("id", "issue")) |>
+  left_join(df_p |> filter(wave == 2) |> select(id, treatment_wave2), by = "id")
+
+m_h15 <- lm(alpha_w2 ~ alpha_w1 + rel_delta_var, data = df_h15)
+cf_h15 <- summary(m_h15)$coefficients["rel_delta_var", ]
+
+print_one_sided(
+  sprintf("H15: Relative Delta social circle %s decreases issue weight (%s)", variance_type, k),
+  cf_h15["Estimate"], cf_h15["Std. Error"], cf_h15["t value"],
+  df   = m_h15$df.residual,
+  direction = "negative"
+)
+
+```
+
+```{r}
+#| label: H15-plot
+
+df_h15 |>
+  filter(!is.na(rel_delta_var), !is.na(alpha_w2), !is.na(alpha_w1)) |>
+  mutate(
+    delta_alpha       = alpha_w2 - alpha_w1,
+    rel_delta_var_bin = cut(rel_delta_var, breaks = 7),
+    treatment_wave2   = factor(treatment_wave2, levels = c(0, 1),
+                               labels = c("Control", "Treatment"))
+  ) |>
+  ggplot(aes(x = rel_delta_var, y = delta_alpha, color = treatment_wave2)) +
+  geom_boxplot(aes(group = rel_delta_var_bin), fill = "steelblue", alpha = 0.15,
+               outlier.shape = NA, color = "gray40") +
+  geom_point(alpha = 0.1, size = 1) +
+  geom_smooth(formula = y ~ x, method = "lm",    se = FALSE, alpha = 0.5) +
+  geom_smooth(formula = y ~ x, method = "loess", se = FALSE, linetype = "dashed", alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_color_manual(values = c("Control" = "steelblue", "Treatment" = "firebrick"),
+                     name = "Wave 2") +
+  labs(title = sprintf("H15: Relative social-circle-%s change vs weight (%s) change",
+                       variance_type, k),
+       x = sprintf("Relative Delta social circle %s", variance_type),
+       y = sprintf("Delta alpha (%s)", k)) +
+  theme_minimal()
+```
+
+
+### H16 (caution)
+\paragraph{H16. Increase in overall social circle variance decreases distance to typical voters.}
+
+We model the map distances between the participant themselves and typical voters of political parties $r$ in wave $w2$ as 
+\begin{equation}
+    d_{n, self-r}(w2) = d_{n, self-r}(w1) + \beta_1 \cdot \mathbb{I}(\text{condition}_n=T) \cdot \sum_q  \Delta x_{n,\mathrm{self}-r, q}  \cdot (\mathrm{var}_{n,q}(w2)  - \mathrm{var}_{n,q}(w1) ) + \epsilon_{n,r}
+\end{equation} 
+
+The explanatory variable is the change in social circle variance averaged over all six issues and weighted by the corresponding belief differences between participant and the typical voter of party $r$, $\Delta x_{n,\mathrm{self}-r, q} = \lvert x_{n,\mathrm{self},q} - x_{n,r,q} \rvert$.
+
+The prediction is $\beta_1<0$. When overall social circle variance increases, the reported distance between participant and typical voter beliefs decreases. 
+%We test this via a t-test with significance threshold $\alpha = 0.05$.
+
+\begin{minipage}{\linewidth}
+{\color{red} ERROR: This should not include the treatment. The effect we want to test is whether variance increase (weighted by opinion difference, such that ) changes distances.  
+\begin{equation}
+    d_{n, self-r}(w2) = d_{n, self-r}(w1) + \beta_1 \cdot \sum_q  \Delta x_{n,\mathrm{self}-r, q}  \cdot (\mathrm{var}_{n,q}(w2)  - \mathrm{var}_{n,q}(w1) ) + \beta_2 \cdot {condition}_n + u_n + \epsilon_{n,r}
+\end{equation} 
+or alternatively, but that's not really a fair thing to test and not really related to our theory (see discussion with Mirta): 
+\begin{equation}
+    d_{n, self-r}(w2) = d_{n, self-r}(w1) + \beta_1 \cdot {condition}_n  + \epsilon_{n,r}
+\end{equation} 
+}
+\end{minipage}
+```{r}
+#| label: H16-H17-shared-data
+# Build shared data objects used by both H16 and H17 variants
+
+variance_type <- "std"
+var_col       <- paste0(variance_type, "_socialCircle_ops")
+
+# Wave 1 and 2 self–party distances
+df_self_party_w1 <- df_diff |>
+  filter(id %in% inds_bothwaves, dot1 == "self", dot2 %in% partiesVars, wave == 1) |>
+  select(id, dot2, pixel_dist_w1 = pixel_dist)
+
+df_self_party_w2 <- df_diff |>
+  filter(id %in% inds_bothwaves, dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
+  select(id, dot2, pixel_dist_w2 = pixel_dist, sympathy_w2 = sympathy)
+
+# deltaX (wave 2)
+df_deltaX <- df_diff |>
+  filter(id %in% inds_bothwaves, dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
+  select(id, dot2, all_of(col_deltas))
+
+# Variance change per participant per issue (wide)
+df_delta_var_wide <- df_p |>
+  filter(id %in% c(treatment_ids, control_ids)) |>
+  pivot_longer(cols = matches(paste0(var_col, "_")),
+               names_to  = c(".value", "issue"),
+               names_pattern = paste0("^(", var_col, ")_(.*)")) |>
+  pivot_wider(id_cols = c(id, issue), names_from = wave,
+              names_prefix = "var_w", values_from = all_of(var_col)) |>
+  mutate(delta_var = var_w2 - var_w1) |>
+  pivot_wider(id_cols = id, names_from = issue,
+              names_prefix = "delta_var_", values_from = delta_var)
+
+# Long delta_var (for new H16/H17 moderation models)
+df_delta_var_long <- df_p |>
+  filter(id %in% c(treatment_ids, control_ids)) |>
+  pivot_longer(cols = matches(paste0(var_col, "_")),
+               names_to  = c(".value", "issue"),
+               names_pattern = paste0("^(", var_col, ")_(.*)")) |>
+  pivot_wider(id_cols = c(id, issue), names_from = wave,
+              names_prefix = "var_w", values_from = all_of(var_col)) |>
+  mutate(delta_var   = var_w2 - var_w1,
+         delta_var_c = as.numeric(scale(delta_var, center = TRUE, scale = FALSE))) |>
+  select(id, issue, delta_var, delta_var_c)
+```
+
+```{r}
+#| label: H16 
+
+# Simple direct-effect check (does treatment affect pixel_dist?)
+df_h16_simple <- df_self_party_w2 |>
+  mutate(group = if_else(id %in% treatment_ids, "treatment", "control")) |>
+  left_join(df_self_party_w1, by = c("id", "dot2"))
+
+m_h16_direct <- lmer(pixel_dist_w2 ~ group + (1 | id) + (1 | dot2),
+                     data = df_h16_simple, REML = TRUE)
+cat("=== H16 (simple: treatment → pixel_dist) ===\n")
+print(summary(m_h16_direct)$coefficients)
+
+# Full model: weighted variance change
+df_h16_full <- df_deltaX |>
+  left_join(df_self_party_w1,   by = c("id", "dot2")) |>
+  left_join(df_self_party_w2,   by = c("id", "dot2")) |>
+  left_join(df_delta_var_wide,  by = "id") |>
+  mutate(
+    group = if_else(id %in% treatment_ids, "treatment", "control"),
+    weighted_var_change = rowSums(
+      across(all_of(col_deltas)) * across(all_of(paste0("delta_var_", questions_sc))),
+      na.rm = TRUE
+    )
+  )
+
+m_h16_full <- lmer(pixel_dist_w2 ~ pixel_dist_w1 + weighted_var_change + group + (1 | id),
+                   data = df_h16_full, REML = TRUE)
+cf_h16 <- lmer_coef(m_h16_full, "weighted_var_change")
+
+cat("\n")
+print_one_sided("H16 (full): weighted Deltavar decreases perceived distance",
+                cf_h16$beta, cf_h16$se, cf_h16$t, direction = "negative")
+
+```
+
+
+### H17 (caution)
+\paragraph{H17. Increase in overall social circle variance increases likeability rating of typical voters.}
+
+Similarly, we model how participant $n$ rates the likeability rating of typical voters of party $r$ in wave 2 as 
+\begin{equation}
+    y_{n,r} = \beta_0 + \beta_1 \cdot \mathbb{I}(\text{condition}_n=T) \cdot \sum_q \Delta x_{n,\mathrm{self}-r,q} \cdot (\mathrm{var}_{n,q}(w2)  - \mathrm{var}_{n,q}(w1))  + u_n + \epsilon_{n,r}
+\end{equation} 
+
+The prediction is $\beta_1 > 0$. When overall social circle variance increases, the likeability rating of typical voters of the political parties increases.
+%We test this via a t-test with significance threshold $\alpha = 0.05$.
+
+Most simple:  Does treatment affect liking? No obviously not! 
+```{r}
+#| label: H17
+
+# Simple direct-effect check
+df_h17_simple <- df_self_party_w2 |>
+  mutate(group = if_else(id %in% treatment_ids, "treatment", "control"))
+
+m_h17_direct <- lmer(sympathy_w2 ~ group + (1 | id) + (1 | dot2),
+                     data = df_h17_simple, REML = TRUE)
+cat("=== H17 (simple: treatment → sympathy) ===\n")
+print(summary(m_h17_direct)$coefficients)
+
+# Full model
+df_h17_full <- df_deltaX |>
+  left_join(df_self_party_w2,  by = c("id", "dot2")) |>
+  left_join(df_delta_var_wide, by = "id") |>
+  mutate(
+    group = if_else(id %in% treatment_ids, "treatment", "control"),
+    weighted_var_change = rowSums(
+      across(all_of(col_deltas)) * across(all_of(paste0("delta_var_", questions_sc))),
+      na.rm = TRUE
+    )
+  )
+
+m_h17_full <- lmer(sympathy_w2 ~ weighted_var_change + group + (1 | id),
+                   data = df_h17_full, REML = TRUE)
+cf_h17 <- lmer_coef(m_h17_full, "weighted_var_change")
+
+cat("\n")
+print_one_sided("H17 (full): weighted Deltavar increases likeability",
+                cf_h17$beta, cf_h17$se, cf_h17$t, direction = "positive")
+```
+
+## NEW: new versions of H16 and H17 (moderation) 
+
+### H16 new
+\paragraph{H16: Treatment increases social circle variance, which weakens the effect of opinion differences on perceived distance.}
+
+We test this hypothesis in two steps, conditional on H14 being confirmed (i.e., the nudge successfully increased social circle variance in the treatment group).
+
+\textbf{Step 1 — Intent-to-Treat (ITT):} Does the treatment moderate the relationship between opinion differences $\Delta X_{n,r,q} = \lvert x_{n,\text{self},q} - x_{n,r,q} \rvert$ and perceived distance $d$? We model:
+\begin{equation}
+    d_{n, \text{self}-r, q}(w2) = \beta_0 + \beta_1 \cdot \Delta X_{n,r,q} + \beta_2 \cdot \mathbb{I}(\text{condition}_n = T) + \beta_3 \cdot \Delta X_{n,r,q} \cdot \mathbb{I}(\text{condition}_n = T) + u_n + v_r + v_q + \epsilon_{n,r,q}
+\end{equation}
+where $u_n$ is the participant random intercept, $v_r$ the party voter random intercept, and $v_q$ the question random intercept. The prediction is $\beta_3 < 0$: the treatment weakens the effect of opinion differences on perceived distance.
+
+\textbf{Step 2 — Variance as moderator:} Does the actual change in variance $\Delta \text{var}_{n,q} = \text{var}_{n,q}(w2) - \text{var}_{n,q}(w1)$ moderate the $\Delta X \to d$ relationship, above and beyond treatment assignment?
+\begin{equation}
+    d_{n, \text{self}-r, q}(w2) = \beta_0 + \beta_1 \cdot \Delta X_{n,r,q} + \beta_2 \cdot \Delta \text{var}_{n,q} + \beta_3 \cdot \Delta X_{n,r,q} \cdot \Delta \text{var}_{n,q} + u_n + v_r + v_q + \epsilon_{n,r,q}
+\end{equation}
+The prediction is $\beta_3 < 0$: when social circle variance increases, the effect of opinion differences on perceived distance weakens. Step 2 speaks to the \emph{mechanism}: it is the variance increase itself, not merely treatment assignment, that drives the moderation. Together, Steps 1 and 2 establish the causal chain:
+\begin{equation}
+    \mathbb{I}(T) \xrightarrow{H14} \Delta \text{var} \xrightarrow{\beta_3 < 0} \text{weakens } (\Delta X \to d)
+\end{equation}
+
+```{r}
+#| label: H16-new
+
+# Step 1 – ITT: does treatment moderate DeltaX → distance?
+df_h16_itt <- df_diff |>
+  filter(dot1 == "self", dot2 %in% partiesVars, wave == 2,
+         id %in% c(treatment_ids, control_ids)) |>
+  pivot_longer(cols = matches(paste0("^(deltaX|", var_col, ")_(", paste(questions_sc, collapse = "|"), ")$")),
+               names_to  = c(".value", "issue"),
+               names_pattern = paste0("^(deltaX|", var_col, ")_(.*)")) |>
+  select(id, wave, dot2, pixel_dist, issue, deltaX, all_of(var_col)) |>
+  mutate(treatment = as.integer(id %in% treatment_ids))
+
+m_h16_itt <- lmer(pixel_dist ~ deltaX * treatment + (1 | id) + (1 | issue) + (1 | dot2),
+                  data = df_h16_itt)
+cf_itt_16  <- lmer_coef(m_h16_itt, "deltaX:treatment")
+
+cat("\n")
+print_one_sided("H16-new Step 1 (ITT): treatment weakens DeltaX → distance",
+                cf_itt_16$beta, cf_itt_16$se, cf_itt_16$t, direction = "negative")
+
+# Step 2 – Deltavar as moderator
+df_h16_var <- df_h16_itt |>
+  left_join(df_delta_var_long, by = c("id", "issue"))
+
+m_h16_var  <- lmer(pixel_dist ~ deltaX * delta_var_c + (1 | id) + (1 | issue) + (1 | dot2),
+                   data = df_h16_var)
+cf_var_16  <- lmer_coef(m_h16_var, "deltaX:delta_var_c")
+
+print_one_sided("H16-new Step 2 (Deltavar moderator): Deltavar weakens DeltaX → distance",
+                cf_var_16$beta, cf_var_16$se, cf_var_16$t, direction = "negative")
+
+```
+
+
+### H17 new 
+\paragraph{H17: Treatment increases social circle variance, which increases likeability ratings of typical party voters.}
+
+We test this hypothesis in two steps, conditional on H14 being confirmed (i.e., the nudge successfully increased social circle variance in the treatment group).
+
+\textbf{Step 1 — Intent-to-Treat (ITT):} Does the treatment moderate the relationship between opinion differences $\Delta X_{n,r,q}$ and likeability ratings $y_{n,r}$? We model:
+\begin{equation}
+    y_{n,r,q}(w2) = \beta_0 + \beta_1 \cdot \Delta X_{n,r,q} + \beta_2 \cdot \mathbb{I}(\text{condition}_n = T) + \beta_3 \cdot \Delta X_{n,r,q} \cdot \mathbb{I}(\text{condition}_n = T) + u_n + v_r + v_q + \epsilon_{n,r,q}
+\end{equation}
+where $u_n$ is the participant random intercept, $v_r$ the party voter random intercept, and $v_q$ the question random intercept. The prediction is $\beta_3 > 0$: the treatment weakens the negative effect of opinion differences on likeability, i.e. participants in the treatment condition rate typical voters of parties they disagree with more favourably.
+
+\textbf{Step 2 — Variance as moderator:} Does the actual change in variance $\Delta \text{var}_{n,q} = \text{var}_{n,q}(w2) - \text{var}_{n,q}(w1)$ moderate the $\Delta X \to y$ relationship, above and beyond treatment assignment?
+\begin{equation}
+    y_{n,r,q}(w2) = \beta_0 + \beta_1 \cdot \Delta X_{n,r,q} + \beta_2 \cdot \Delta \text{var}_{n,q} + \beta_3 \cdot \Delta X_{n,r,q} \cdot \Delta \text{var}_{n,q} + u_n + v_r + v_q + \epsilon_{n,r,q}
+\end{equation}
+The prediction is $\beta_3 > 0$: when social circle variance increases, the negative effect of opinion differences on likeability weakens. Step 2 speaks to the \emph{mechanism}: it is the variance increase itself, not merely treatment assignment, that drives the moderation. Together, Steps 1 and 2 establish the causal chain:
+\begin{equation}
+    \mathbb{I}(T) \xrightarrow{H14} \Delta \text{var} \xrightarrow{\beta_3 > 0} \text{weakens } (\Delta X \to -y)
+\end{equation}
+
+```{r}
+#| label: H17-new -- treatment moderates deltaX -> likeability via variance
+
+df_h17_itt <- df_diff |>
+  filter(dot1 == "self", dot2 %in% partiesVars, wave == 2,   # fixed: was "2"
+         id %in% c(treatment_ids, control_ids)) |>
+  pivot_longer(cols = matches(paste0("^(deltaX|", var_col, ")_(", paste(questions_sc, collapse = "|"), ")$")),
+               names_to  = c(".value", "issue"),
+               names_pattern = paste0("^(deltaX|", var_col, ")_(.*)")) |>
+  select(id, wave, dot2, sympathy, issue, deltaX, all_of(var_col)) |>
+  mutate(treatment = as.integer(id %in% treatment_ids))
+
+m_h17_itt <- lmer(sympathy ~ deltaX * treatment + (1 | id) + (1 | issue) + (1 | dot2),
+                  data = df_h17_itt)
+cf_itt_17  <- lmer_coef(m_h17_itt, "deltaX:treatment")
+
+cat("\n")
+print_one_sided("H17-new Step 1 (ITT): treatment weakens DeltaX → low likeability",
+                cf_itt_17$beta, cf_itt_17$se, cf_itt_17$t, direction = "positive")
+
+df_h17_var <- df_h17_itt |>
+  left_join(df_delta_var_long, by = c("id", "issue"))
+
+m_h17_var <- lmer(sympathy ~ deltaX * delta_var_c + (1 | id) + (1 | issue) + (1 | dot2),
+                  data = df_h17_var)
+cf_var_17 <- lmer_coef(m_h17_var, "deltaX:delta_var_c")
+
+print_one_sided("H17-new Step 2 (Deltavar moderator): Deltavar weakens DeltaX → low likeability",
+                cf_var_17$beta, cf_var_17$se, cf_var_17$t, direction = "positive")
+```
+
+
+
+# \section{Exclusion criteria}
+
+Participants are excluded if they complete the survey in less than one third of the median completion time, provide invariant slider responses, or do not indicate their own beliefs on the six political issues.

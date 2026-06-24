@@ -7,3 +7,13 @@ wave2
 __pycache__
 .R*
 .vdoc*
+__*
+*.ipynb
+Modelfile
+tex_preamble.tex
+*.pptx
+.DS_Store
+*.png
+bilendi_analysis.code-workspace
+figs/
+styles.css
