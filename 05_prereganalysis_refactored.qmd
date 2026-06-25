@@ -155,6 +155,7 @@ lmer_coef <- function(model, term) {
 }
 
 ```
+
 ```{r}
 #| label: consts
 
@@ -693,6 +694,10 @@ The prediction is $\beta_q<0$. Issues are assigned higher weight when associated
 
 \begin{minipage}{\linewidth}
 \color{red} \textbf{CHANGE TO PREREG: I am using standard deviation instead of variance now!!!}
+
+\begin{equation}
+    \alpha_{n,q} = 1/6 + \beta_q \cdot \mathrm{var}_{n,q} + u_q + \epsilon_{n,q} \ .
+\end{equation}
 \end{minipage}
 
 
@@ -737,13 +742,13 @@ run_h9 <- function(k = "exp", variance_type = "std") {
 }
 
 run_h9("exp",   "std")
-run_h9("corrS", "std")
+run_h9("corrP", "std")
 ```
 
 ```{r}
 #| label: H9-plot
 
-k <- "exp"; variance_type <- "std"
+k <- "corrP"; variance_type <- "std"
 df_h9_plot <- df_p |>
   filter(wave %in% c(1, 2)) |>
   pivot_longer(
@@ -751,7 +756,7 @@ df_h9_plot <- df_p |>
     names_to      = c(".value", "issue"),
     names_pattern = paste0("^(std_socialCircle_ops|", k, "_alpha)_(.*)")
   ) |>
-  rename(var_sc = std_socialCircle_ops, alpha = all_of(paste0(k, "_alpha"))) |>
+  rename(var_sc = all_of(paste0(variance_type, "_socialCircle_ops")), alpha = all_of(paste0(k, "_alpha"))) |>
   filter(!is.na(alpha), !is.na(var_sc))
 
 ggplot(df_h9_plot, aes(x = var_sc, y = alpha)) +
@@ -762,7 +767,7 @@ ggplot(df_h9_plot, aes(x = var_sc, y = alpha)) +
        x = sprintf("Social circle %s (normalised)", variance_type), y = "Alpha") +
   theme_minimal() +
   theme(strip.text = element_text(size = 7))
-ggsave(sprintf("h9_plot_%s_%s.png", k, variance_type), width = 16/2.54, height = 9/2.54)
+ggsave(sprintf("figs/h9_plot_%s_%s.png", k, variance_type), width = 16/2.54, height = 9/2.54)
 
 ```
 
@@ -784,46 +789,53 @@ The prediction is $\beta_q<0$. Issues are rated as more important when social ci
 
 ```{r}
 #| label: H10
+run_h10 <- function(variance_type = "std") {
+  var_col       <- paste0(variance_type, "_socialCircle_ops")
 
-variance_type <- "std"
-var_col       <- paste0(variance_type, "_socialCircle_ops")
+  df_h10 <- df_p |>
+    filter(wave %in% c(1, 2)) |>
+    pivot_longer(
+      cols          = c(all_of(paste0("w_", questions_sc)),
+                        all_of(paste0(var_col, "_", questions_sc))),
+      names_to      = c(".value", "issue"),
+      names_pattern = paste0("^(", var_col, "|w)_(.*)")
+    ) |>
+    rename(var_sc = all_of(var_col))
 
-df_h10 <- df_p |>
-  filter(wave %in% c(1, 2)) |>
-  pivot_longer(
-    cols          = c(all_of(paste0("w_", questions_sc)),
-                      all_of(paste0(var_col, "_", questions_sc))),
-    names_to      = c(".value", "issue"),
-    names_pattern = paste0("^(", var_col, "|w)_(.*)")
-  ) |>
-  rename(var_sc = all_of(var_col))
+  m_h10 <- lmer(w ~ var_sc + wave + (1 | issue) + (1 | id), data = df_h10)
+  cf_h10 <- lmer_coef(m_h10, "var_sc")
 
-m_h10 <- lmer(w ~ var_sc + wave + (1 | issue) + (1 | id), data = df_h10)
-cf_h10 <- lmer_coef(m_h10, "var_sc")
+  print_one_sided(
+    sprintf("H10: Social circle %s predicts reported issue importance", variance_type),
+    cf_h10$beta, cf_h10$se, cf_h10$t, direction = "negative"
+  )
 
-print_one_sided(
-  sprintf("H10: Social circle %s predicts reported issue importance", variance_type),
-  cf_h10$beta, cf_h10$se, cf_h10$t, direction = "negative"
-)
+  # Per-issue
+  cat("Per-issue breakdown:\n")
+  purrr::walk(questions_sc, function(q) {
+    df_q <- df_h10 |> filter(issue == q) |> select(id, wave, issue, w, var_sc)
+    m_q  <- lmer(w ~ var_sc + wave + (1 | id), data = df_q)
+    cf_q <- lmer_coef(m_q, "var_sc")
+    cat(sprintf("  %-35s  beta=%7.4f  t=%6.3f  p=%.4f  %s\n",
+                q, cf_q$beta, cf_q$t, cf_q$p2, sig_stars(cf_q$p2)))
+  })
 
-# Per-issue
-cat("Per-issue breakdown:\n")
-purrr::walk(questions_sc, function(q) {
-  df_q <- df_h10 |> filter(issue == q) |> select(id, wave, issue, w, var_sc)
-  m_q  <- lmer(w ~ var_sc + wave + (1 | id), data = df_q)
-  cf_q <- lmer_coef(m_q, "var_sc")
-  cat(sprintf("  %-35s  beta=%7.4f  t=%6.3f  p=%.4f  %s\n",
-              q, cf_q$beta, cf_q$t, cf_q$p2, sig_stars(cf_q$p2)))
-})
-
-ggplot(df_h10, aes(x = var_sc, y = w, color = issue)) +
+  ggplot(df_h10, aes(x = var_sc, y = w, color = issue)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", se = TRUE) +
   labs(x = "Social circle variance", y = "Importance",
-       title = sprintf("H10: Social circle %s vs relative importance", variance_type)) +
+      title = sprintf("H10: Social circle %s vs relative importance", variance_type)) +
   theme_minimal()
+}
+
+run_h10(variance_type="std")
 ```
 
+```{r}
+#| label: H10-plot
+
+
+```
 ### H11
 
 \paragraph{H11. Overall social circle variance helps predict likeability rating of typical voters.}
@@ -858,19 +870,20 @@ avg_var_sc <- df_p |>
   filter(wave == 2) |>
   select(id, all_of(paste0(variance_type, "_socialCircle_ops_", questions_sc))) |>
   drop_na() |>
-  mutate(avg_var_sc = rowMeans(across(everything(), .names = NULL))) |>
+  mutate(avg_var_sc = rowMeans(across(-id))) |> 
   select(id, avg_var_sc)
 
 df_h11 <- df_diff |>
   filter(dot1 == "self", dot2 %in% partiesVars, wave == 2) |>
   select(id, sympathy, party, pixel_dist) |>
   left_join(avg_var_sc, by = "id") |>
-  mutate(pixel_dist_z = as.numeric(scale(pixel_dist)),
+  mutate(
+    # pixel_dist_z = as.numeric(scale(pixel_dist)),
          avg_var_sc_z = as.numeric(scale(avg_var_sc)))
 
-m_base_h11 <- lmer(sympathy ~ pixel_dist_z + (1 | id),
+m_base_h11 <- lmer(sympathy ~ pixel_dist + (1 | id),
                    data = df_h11, REML = FALSE)
-m_ext_h11  <- lmer(sympathy ~ pixel_dist_z + avg_var_sc_z + (1 | id),
+m_ext_h11  <- lmer(sympathy ~ pixel_dist + avg_var_sc_z + (1 | id),
                    data = df_h11, REML = FALSE)
 
 cf_h11 <- lmer_coef(m_ext_h11, "avg_var_sc_z")
@@ -887,8 +900,8 @@ r2_ext  <- r2(m_ext_h11)
 
 cat("=== H11: Social circle variance predicts likeability (beyond map distance) ===\n")
 cat(sprintf(" beta (pixel_dist) = %.4f\n",
-            fixef(m_ext_h11)["pixel_dist_z"]))
-cat(sprintf(" beta (avg_var_sc) = %.4f\n",
+            fixef(m_ext_h11)["pixel_dist"]))
+cat(sprintf(" beta (avg_var_sc_z) = %.4f\n",
             cf_h11$beta))
 cat(sprintf(" SE = %.4f\n",
             cf_h11$se))
@@ -1237,6 +1250,7 @@ The goal of this exploration is to investigate to what extent these (theoretical
 
 ```{r}
 #| label: Aim3-Exploration
+print("later")
 ```
 
 ## Aim 4
@@ -1369,7 +1383,7 @@ df_h15 <- df_h15_var |>
   left_join(df_h15_alpha, by = c("id", "issue")) |>
   left_join(df_p |> filter(wave == 2) |> select(id, treatment_wave2), by = "id")
 
-m_h15 <- lm(alpha_w2 ~ alpha_w1 + rel_delta_var, data = df_h15)
+m_h15 <- lm(alpha_w2 ~ alpha_w1 + rel_delta_var , data = df_h15)
 cf_h15 <- summary(m_h15)$coefficients["rel_delta_var", ]
 
 print_one_sided(
