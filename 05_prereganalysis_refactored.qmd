@@ -28,10 +28,10 @@ format:
     number-sections: true
     colorlinks: true
     geometry:
-      - top=2mm
-      - left=2mm
-      - right=2mm
-      - bottom=2mm
+      - top=5mm
+      - left=10mm
+      - right=10mm
+      - bottom=5mm
 ---
 
 ```{=latex}
@@ -52,8 +52,9 @@ load_or_install <- function(pkg) {
 pkgs <- c(
   "tidyverse", "lme4", "lmerTest", "nloptr", "httpgd",
   "languageserver", "lmtest", "sandwich", "caret", "knitr",
-  "prettycode", "performance", "estimatr", "patchwork"
+  "prettycode", "performance", "estimatr", "patchwork", "broom"
 )
+library("broom.mixed")
 knitr::opts_chunk$set(comment = NA)
 invisible(lapply(pkgs, load_or_install))
 options(vsc.viewer = TRUE)
@@ -118,13 +119,22 @@ print_fit_table <- function(...) {
     Model    = names(models),
     AIC      = round(sapply(models, AIC), 1),
     BIC      = round(sapply(models, BIC), 1),
-    logLik   = round(sapply(models, \(m) as.numeric(logLik(m))), 1),
-    npar     = sapply(models, \(m) length(fixef(m)))
+    logLik   = round(sapply(models, function(m) as.numeric(logLik(m))), 1),
+    npar     = sapply(models, function(m) length(fixef(m)))
   )
   tbl$delta_AIC <- tbl$AIC - min(tbl$AIC)
   tbl$delta_BIC <- tbl$BIC - min(tbl$BIC)
   print(tbl, row.names = FALSE)
   invisible(tbl)
+}
+
+tidy_print <- function(m, mixed = FALSE) {
+  tidy_fn <- if (mixed) broom.mixed::tidy else broom::tidy
+  tidy_fn(m, effects = "fixed") |>
+    select(term, estimate, std.error, p.value) |>
+    mutate(across(where(is.numeric), \(x) round(x, 3))) |>
+    print(m=Inf) |> 
+    knitr::kable()
 }
 
 sig_stars <- function(p) {
@@ -190,7 +200,7 @@ control_ids <- df_p |>
 df_p <- df_p |>
   mutate(
     overall_std_socialCircle = rowMeans(across(all_of(col_var_std))),
-    across(all_of(col_var_std), \(x) x^2,
+    across(all_of(col_var_std), function(x) x^2,
            .names = "var_{gsub('std_', '', col)}"),
     wave = factor(wave)
   )
@@ -355,9 +365,16 @@ We test the reliability of our tool by comparing the similarity of issue weights
   \overline{\Delta \alpha_q}_{\mathrm{between}} & = & \mathbb{E} \left[ \lvert \alpha_{n,q}(\mathrm{wave}\,2) - \alpha_{m,q}(\mathrm{wave}\,1/\mathrm{wave}\, 2)  \rvert  \right] \qquad \text{ with }m\neq n
 \end{eqnarray}
 
-ERROR: It should be: $\overline{\Delta \alpha_q}_{\mathrm{within}} - \overline{\Delta \alpha_q}_{\mathrm{between}} < 0$
+\begin{minipage}{\textwidth}
+{\color{red} ERROR: It should be: $\overline{\Delta \alpha_q}_{\mathrm{within}} - \overline{\Delta \alpha_q}_{\mathrm{between}} < 0$} 
 
-The prediction is that $\overline{\Delta \alpha_q}_{\mathrm{within}} - \overline{\Delta \alpha_q}_{\mathrm{between}} > 0$ (one-sample t-test with $\alpha=0.05$). Participants' issue weights in wave 2 are more similar to their own issue weights in the previous wave than to those of other participants in wave 1 or wave 2 (in the control condition). 
+{\color{red} ADDON: $\mathbb{E}$ is the L1 (Manhattan) norm, i.e. $\mathbb{E} \left[ \lvert \alpha_{n,q}(\mathrm{wave}\,2) - \alpha_{m,q}(\mathrm{wave}\,1)  \rvert  \right]  = \sum_q \left[ \lvert \alpha_{n,q}(\mathrm{wave}\,2) - \alpha_{m,q}(\mathrm{wave}\,1)  \rvert  \right] $.}
+
+{\color{red} ADDON: I compare only wave 2 alphas of pariticipant $n$ to wave 1 alpahs of all other pariticipants $m$.}
+
+\end{minipage}
+
+The prediction is that $\overline{\Delta \alpha_q}_{\mathrm{within}} - \overline{\Delta \alpha_q}_{\mathrm{between}} < 0$ (note: corrected error from preregistration) (one-sample t-test with $\alpha=0.05$). Participants' issue weights in wave 2 are more similar to their own issue weights in the previous wave than to those of other participants in wave 1 (in the control condition). 
 
 ```{r}
 #| label: H5
@@ -384,7 +401,7 @@ w2_mat <- df_h5 |> filter(wave == 2) |> arrange(id) |> select(all_of(alpha_cols)
 n      <- nrow(w1_mat)
 
 within_means  <- rowMeans(abs(w2_mat - w1_mat))
-between_means <- vapply(seq_len(n), \(i) {
+between_means <- vapply(seq_len(n), function(i) {
   mean(rowMeans(abs(sweep(w2_mat[-i, , drop = FALSE], 2, w1_mat[i, ]))))
 }, numeric(1))
 
@@ -420,6 +437,120 @@ cat(sprintf("  Supported           : %s\n\n",
 
 In this section, we hypothesise that demographic and identity-related variables, including party preference, ${party}_n$, left-right placement, ${lr}_n$, age, ${age}_n$, or combinations of them moderate the relationship between belief differences and issue weights.
 
+
+\begin{minipage}{\textwidth}
+{\color{red}
+We have two different interprations of the following analysis: We can analyse the effect per issue separately (eq 2) or jointly across issues (eq 1).
+
+Equation for Interpretation (1) for example for lr:
+
+\begin{equation}
+    \alpha_{n,q} = beta_0 +  \beta_{lr} \cdot lr + \sum_q \beta_{q} \cdot \mathbb{I}[issue=q] + \sum_q \beta_{lr \times  q} lr \cdot \mathbb{I}[issue=q] + ( u_n)  + \beta_w wave +  \epsilon_{n,q}
+\end{equation}
+
+and equation for interpreatation (2) is for each issue $q$:
+
+\begin{equation}
+    \alpha_{n,q} = beta_0 +  \beta_{lr} \cdot lr + ( u_n)  + \beta_w wave +  \epsilon_{n,q}
+\end{equation}
+
+where $u_n$ is the participant-level random intercept (gaussian distributed), included for weights defined as correlations (via lmer) but dropped for weights defined as the fitted weights with linear/exp kernels due to singular fits, where clustered standard errors are used instead
+
+}
+\end{minipage}
+
+
+```{r}
+run_H_joint <- function(k, predictor, label, use_lmer = TRUE, categorical = FALSE) {
+  alpha_cols <- paste0(k, "_alpha_", questions_sc)
+
+  df_h <- df_p |>
+    filter(wave %in% c(1, 2)) |>
+    select(id, wave, all_of(predictor), all_of(alpha_cols)) |>
+    pivot_longer(
+      cols         = all_of(alpha_cols),
+      names_to     = "issue",
+      names_prefix = paste0(k, "_alpha_"),
+      values_to    = "alpha"
+    ) |>
+    filter(!is.na(.data[[predictor]]), !is.na(alpha)) |>
+    mutate(
+      issue = relevel(factor(issue), ref = "regulate_internet"),
+      wave  = factor(wave)
+    )
+
+  if (categorical) {
+    df_h <- df_h |>
+      mutate(!!predictor := relevel(factor(.data[[predictor]]), ref = "No party"))
+  }
+
+  f_null <- alpha ~ issue + wave
+  f_full <- reformulate(c("issue", paste0(predictor, " * issue"), "wave"), response = "alpha")
+
+  if (use_lmer) {
+    m_null <- lmer(update(f_null, . ~ . + (1 | id)), data = df_h, REML=FALSE)
+    m_full <- lmer(update(f_full, . ~ . + (1 | id)), data = df_h, REML=FALSE)
+    wt     <- anova(m_null, m_full)
+    stat   <- wt$Chisq[2]; df_num <- wt$Df[2]; p <- wt$`Pr(>Chisq)`[2]
+    print_fit_table("Null" = m_null, "Full" = m_full)
+    tidy_print(m_full, mixed = TRUE)
+    print_lrt(sprintf("%s (issue weights: %s): %s × issue interaction", label, k, predictor),
+              stat, df_num, p = p, type = "chi2")
+  } else {
+    m_null <- lm(f_null,  data = df_h)
+    m_full <- lm(f_full,  data = df_h)
+    wt     <- anova(m_null, m_full)
+    stat   <- wt$F[2]; df_num <- wt$Df[2]; df_den <- wt$Res.Df[2]; p <- wt$`Pr(>F)`[2]
+    m_full_rob <- lm_robust(f_full, data = df_h, clusters = id, se_type = "CR2")
+    cat(sprintf("\nR^2  Null = %.3f  |  Full = %.3f\n",
+                summary(m_null)$r.squared, summary(m_full)$r.squared))
+    tidy_print(m_full_rob)
+    print_lrt(sprintf("%s (issue weights: %s): %s × issue interaction", label, k, predictor),
+              stat, df_num, df_den, p, type = "F")
+  }
+}
+
+run_H_per_issue <- function(k, predictor, label, use_lmer = TRUE, categorical = FALSE) {
+  cat(sprintf("\n-- %s per issue (issue weight: %s) --", label, k))
+
+  purrr::walk(questions_sc, function(q) {
+    df_q <- df_p |>
+      filter(wave %in% c(1, 2)) |>
+      select(id, wave, all_of(predictor), alpha_q = all_of(paste0(k, "_alpha_", q))) |>
+      filter(!is.na(.data[[predictor]]), !is.na(alpha_q)) |>
+      mutate(wave = factor(wave))
+
+    if (categorical) {
+      df_q <- df_q |>
+        mutate(!!predictor := relevel(factor(.data[[predictor]]), ref = "No party"))
+    }
+
+    f      <- reformulate(c(predictor, "wave"), response = "alpha_q")
+    f_null <- alpha_q ~ wave
+
+    if (use_lmer) {
+      m      <- lmer(update(f, . ~ . + (1 | id)), data = df_q, REML = FALSE)
+      m_null <- lmer(update(f_null, . ~ . + (1 | id)), data = df_q, REML = FALSE)
+      wt     <- anova(m_null, m)
+      p      <- wt$`Pr(>Chisq)`[2]; chi <- wt$Chisq[2]; df_lrt <- wt$Df[2]
+      r2v    <- r2(m)
+      cat(sprintf("\n%s  R^2=%.3f/%.3f  LRT chi^2(%d)=%.2f  p=%.4f %s ",
+                  q, r2v$R2_marginal, r2v$R2_conditional,
+                  df_lrt, chi, p, sig_stars(p)))
+    } else {
+      m      <- lm_robust(f, data = df_q, clusters = id, se_type = "CR2")
+      m_lm   <- lm(f,      data = df_q)
+      m_null <- lm(f_null, data = df_q)
+      wt     <- anova(m_null, m_lm)
+      p      <- wt$`Pr(>F)`[2]; f_stat <- wt$F[2]
+      cat(sprintf("\n%s  R^2=%.3f  F(%d,%d)=%.2f  p=%.4f %s ",
+                  q, summary(m_lm)$r.squared,
+                  wt$Df[2], wt$Res.Df[2], f_stat, p, sig_stars(p)))
+    }
+  })
+}
+
+```
 ### H6
 
 \paragraph{H6. Party preference predicts issue weights.} 
@@ -433,104 +564,46 @@ The prediction is $\beta_{r,q} \neq 0$ and $\beta_{r1,q}\neq\beta_{r2,q}$ for at
 Participants affiliated with different parties differ in how strongly they weigh different political issues when mapping individuals. 
 
 
-#### Interpretation 1: Do parties differ across issues?
+\begin{minipage}{\textwidth}
+{\color{red}
+Different interprations: Per Issue (1) or Jointly across issues (2)?
 
-For correlations (unconstrained):
+Equation for Interpretation (1):
+
+\begin{equation}
+    \alpha_{n,q} = beta_0 + \sum_r \beta_{r} \cdot \mathbb{I}[\text{party}_n = r] + \sum_q \beta_{q} q (+ u_n) + \sum_q \beta_{r, q} \mathbb{I}[\text{party}_n = r]  \cdot q + ( u_n) + v_q + \epsilon_{n,q}
+\end{equation}
+
+and equation for interpreatation (2) is for each issue $q$:
+
+\begin{equation}
+    \alpha_{n,q} = beta_0 + \sum_r \beta_{r} \cdot \mathbb{I}[\text{party}_n = r] + ( u_n) + v_q + \epsilon_{n,q}
+\end{equation}
+
+where $u_n$ is removed if the alphas are constrained (in the case of linear/exp fit).
+}
+\end{minipage}
+
+**Interpretation 1: Do parties differ across issues?**
+
+For exponential/linear weights (constrained):
 ```{r}
 #| label: H6
-
-# Helper: run H6 for one weight type and print verdict
-run_h6 <- function(k, use_lmer = TRUE) {
-  alpha_cols <- paste0(k, "_alpha_", questions_sc)
-
-  df_h6 <- df_p |>
-    filter(wave %in% c(1, 2)) |>
-    select(id, wave, party_close, all_of(alpha_cols)) |>
-    filter(party_close %in% c(partiesCloseSel, "No party")) |>
-    pivot_longer(
-      cols         = all_of(alpha_cols),
-      names_to     = "issue",
-      names_prefix = paste0(k, "_alpha_"),
-      values_to    = "alpha_q"
-    ) |>
-    filter(!is.na(party_close), !is.na(alpha_q)) |>
-    mutate(
-      party_close = relevel(factor(party_close), ref = "No party"),
-      issue       = relevel(factor(issue),       ref = "climate_concern"),
-      wave        = factor(wave)
-    )
-
-  if (use_lmer) {
-    m_null <- lmer(alpha_q ~ issue + wave + (1 | id),               data = df_h6)
-    m_full <- lmer(alpha_q ~ party_close * issue + wave + (1 | id), data = df_h6)
-    wt     <- anova(m_null, m_full)
-    stat   <- wt$Chisq[2]; df_num <- wt$Df[2]; p <- wt$`Pr(>Chisq)`[2]
-    print_fit_table("Null" = m_null, "Full" = m_full)
-    print_lrt(sprintf("H6 (%s): party × issue interaction", k),
-              stat, df_num, p = p, type = "chi2")
-  } else {
-    m_null <- lm(alpha_q ~ issue + wave,               data = df_h6)
-    m_full <- lm(alpha_q ~ party_close * issue + wave, data = df_h6)
-    wt     <- anova(m_null, m_full)
-    stat   <- wt$F[2]; df_num <- wt$Df[2]; df_den <- wt$Res.Df[2]; p <- wt$`Pr(>F)`[2]
-    # clustered-SE model for coefficient display
-    m_full_rob <- lm_robust(alpha_q ~ party_close * issue + wave,
-                            data = df_h6, clusters = id, se_type = "CR2")
-    cat(sprintf("\nR^2  Null = %.3f  |  Full = %.3f\n",
-                summary(m_null)$r.squared, summary(m_full)$r.squared))
-    print_lrt(sprintf("H6 (%s): party × issue interaction", k),
-              stat, df_num, df_den, p, type = "F")
-  }
-}
-
-run_h6("corrS", use_lmer = TRUE)
-run_h6("exp",   use_lmer = FALSE)
+# H6 - party
+run_H_joint    ("linear", "party_close", "H6", use_lmer = FALSE, categorical = TRUE)
+run_H_joint    ("corrP",  "party_close", "H6", use_lmer = TRUE,  categorical = TRUE)
 ```
 
-And for exponential/linear weights (constrained):
+
+**Interpretation 2: Within each question, do parties differ?**
+
 ```{r}
 #| label: H6-per-issue
 
-# Per-issue breakdown (both weight types)
-run_h6_per_issue <- function(k, use_lmer = TRUE) {
-  cat(sprintf("\n-- H6 per issue (%s) --\n", k))
+run_H_per_issue("exp",    "party_close", "H6", use_lmer = FALSE, categorical = TRUE)
+run_H_per_issue("corrP",  "party_close", "H6", use_lmer = TRUE,  categorical = TRUE)
 
-  purrr::walk(questions_sc, \(q) {
-    alpha_col <- paste0(k, "_alpha_", q)
-    df_q <- df_p |>
-      filter(wave %in% c(1, 2)) |>
-      select(id, wave, party_close, alpha_q = all_of(alpha_col)) |>
-      filter(party_close %in% c(partiesCloseSel, "No party"), !is.na(alpha_q)) |>
-      mutate(party_close = relevel(factor(party_close), ref = "No party"),
-             wave        = factor(wave))
-
-    if (use_lmer) {
-      m      <- lmer(alpha_q ~ party_close + wave + (1 | id), data = df_q)
-      m_null <- lmer(alpha_q ~ wave + (1 | id),               data = df_q)
-      wt     <- anova(m_null, m)
-      p      <- wt$`Pr(>Chisq)`[2]; chi <- wt$Chisq[2]; df_lrt <- wt$Df[2]
-      r2v    <- r2(m)
-      cat(sprintf("\n%s  R^2=%.3f/%.3f  LRT chi^2(%d)=%.2f  p=%.4f %s\n",
-                  q, r2v$R2_marginal, r2v$R2_conditional,
-                  df_lrt, chi, p, sig_stars(p)))
-    } else {
-      m      <- lm_robust(alpha_q ~ party_close + wave, data = df_q,
-                          clusters = id, se_type = "CR2")
-      m_lm   <- lm(alpha_q ~ party_close + wave, data = df_q)
-      m_null <- lm(alpha_q ~ wave,               data = df_q)
-      wt     <- anova(m_null, m_lm)
-      p      <- wt$`Pr(>F)`[2]; f <- wt$F[2]
-      cat(sprintf("\n%s  R^2=%.3f  F(%d,%d)=%.2f  p=%.4f %s\n",
-                  q, summary(m_lm)$r.squared,
-                  wt$Df[2], wt$Res.Df[2], f, p, sig_stars(p)))
-    }
-  })
-}
-
-run_h6_per_issue("corrS", use_lmer = TRUE)
-run_h6_per_issue("exp",   use_lmer = FALSE)
 ```
-
 
 ### H7 
 
@@ -554,38 +627,18 @@ Left and right participants differ in how strongly they weigh different politica
 ```{r}
 #| label: H7
 
-k <- "exp"
+# H7 - lr
+run_H_joint    ("linear", "lr", "H7", use_lmer = FALSE)
+run_H_joint    ("corrP",  "lr", "H7", use_lmer = TRUE)
 
-cat("=== H7: Left-right placement predicts issue weights ===\n\n")
 
-# Per-issue
-purrr::walk(questions_sc, \(q) {
-  df_q <- df_p |>
-    filter(wave %in% c(1, 2)) |>
-    select(id, wave, lr, alpha_q = all_of(paste0(k, "_alpha_", q))) |>
-    filter(!is.na(alpha_q))
-  m  <- lmer(alpha_q ~ lr + wave + (1 | id), data = df_q)
-  cf <- lmer_coef(m, "lr")
-  cat(sprintf("  %-35s  beta=%.4f  t=%.3f  p=%.4f  %s\n",
-              q, cf$beta, cf$t, cf$p2, sig_stars(cf$p2)))
-})
+```
 
-# Joint model (LRT)
-df_long_h7 <- df_p |>
-  filter(wave %in% c(1, 2)) |>
-  select(id, wave, lr, starts_with(paste0(k, "_alpha_"))) |>
-  pivot_longer(starts_with(paste0(k, "_alpha_")),
-               names_to = "issue", values_to = "alpha") |>
-  mutate(issue = gsub(paste0(k, "_alpha_"), "", issue), issue = factor(issue)) |>
-  filter(!is.na(alpha))
-
-m_full_h7 <- lmer(alpha ~ issue + issue:lr + wave + (1 | id), data = df_long_h7)
-m_null_h7 <- lmer(alpha ~ issue + wave + (1 | id),            data = df_long_h7)
-wt_h7     <- anova(m_null_h7, m_full_h7)
-
-cat("\n")
-print_lrt("H7 joint: lr × issue",
-          wt_h7$Chisq[2], wt_h7$Df[2], p = wt_h7$`Pr(>Chisq)`[2], type = "chi2")
+And again, per issue:
+```{r}
+#| label: H7-per-issue
+run_H_per_issue("exp",    "lr", "H7", use_lmer = FALSE)
+run_H_per_issue("corrP",  "lr", "H7", use_lmer = TRUE)
 
 ```
 
@@ -601,40 +654,16 @@ The prediction is $\beta_q\neq 0$. Older and younger participants differ in how 
 
 ```{r}
 #| label: H8
+run_H_joint    ("linear", "age", "H8", use_lmer = FALSE)
+run_H_joint    ("corrP",  "age", "H8", use_lmer = TRUE)
+```
 
-k <- "exp"
+And again, per issue:
+```{r}
+#| label: H8-per-issue
+run_H_per_issue("exp",    "age", "H8", use_lmer = FALSE)
+run_H_per_issue("corrP",  "age", "H8", use_lmer = TRUE)
 
-cat("=== H8: Age predicts issue weights ===\n\n")
-
-purrr::walk(questions_sc, \(q) {
-  df_q <- df_p |>
-    filter(wave %in% c(1, 2)) |>
-    select(id, wave, age, alpha_q = all_of(paste0(k, "_alpha_", q))) |>
-    filter(!is.na(alpha_q), !is.na(age)) |>
-    mutate(age_z = as.numeric(scale(age)))
-  m  <- lmer(alpha_q ~ age_z + wave + (1 | id), data = df_q, REML = FALSE)
-  cf <- lmer_coef(m, "age_z")
-  cat(sprintf("  %-35s  beta=%.4f  t=%.3f  p=%.4f  %s\n",
-              q, cf$beta, cf$t, cf$p2, sig_stars(cf$p2)))
-})
-
-# Joint model
-df_long_h8 <- df_p |>
-  filter(wave %in% c(1, 2), !is.na(age)) |>
-  mutate(age_z = as.numeric(scale(age))) |>
-  select(id, wave, age_z, starts_with(paste0(k, "_alpha_"))) |>
-  pivot_longer(starts_with(paste0(k, "_alpha_")),
-               names_to = "issue", values_to = "alpha") |>
-  mutate(issue = gsub(paste0(k, "_alpha_"), "", issue), issue = factor(issue)) |>
-  filter(!is.na(alpha))
-
-m_full_h8 <- lmer(alpha ~ issue + issue:age_z + wave + (1 | id), data = df_long_h8, REML = FALSE)
-m_null_h8 <- lmer(alpha ~ issue + wave + (1 | id),               data = df_long_h8, REML = FALSE)
-wt_h8     <- anova(m_null_h8, m_full_h8)
-
-cat("\n")
-print_lrt("H8 joint: age × issue",
-          wt_h8$Chisq[2], wt_h8$Df[2], p = wt_h8$`Pr(>Chisq)`[2], type = "chi2")
 ```
 
 ### Exploration
@@ -692,7 +721,7 @@ run_h9 <- function(k = "exp", variance_type = "std") {
 
   # Per-issue
   cat("Per-issue breakdown:\n")
-  purrr::walk(questions_sc, \(q) {
+  purrr::walk(questions_sc, function(q) {
     df_q <- df_p |>
       filter(wave %in% c(1, 2)) |>
       select(id, wave,
@@ -779,7 +808,7 @@ print_one_sided(
 
 # Per-issue
 cat("Per-issue breakdown:\n")
-purrr::walk(questions_sc, \(q) {
+purrr::walk(questions_sc, function(q) {
   df_q <- df_h10 |> filter(issue == q) |> select(id, wave, issue, w, var_sc)
   m_q  <- lmer(w ~ var_sc + wave + (1 | id), data = df_q)
   cf_q <- lmer_coef(m_q, "var_sc")
@@ -1080,11 +1109,11 @@ comparison_tbl <- tibble(
 ) |>
   mutate(
     rel_improve          = (mse[model == "uniform_exp"] - mse) / mse[model == "uniform_exp"],
-    p_wilcox             = map_dbl(model, \(m) {
+    p_wilcox             = map_dbl(model, function(m) {
       if (m == "uniform_exp") return(NA_real_)
       wilcox.test((pred_mat[, m] - y)^2, baseline_sq, paired = TRUE)$p.value
     }),
-    mean_diff_vs_uniform = map_dbl(model, \(m) {
+    mean_diff_vs_uniform = map_dbl(model, function(m) {
       if (m == "uniform_exp") return(NA_real_)
       mean((pred_mat[, m] - y)^2 - baseline_sq, na.rm = TRUE)
     })
@@ -1112,7 +1141,7 @@ err_cols <- str_replace(pred_cols, "predicted_d_", "err_")
 # Per-participant R^2
 per_person_r2 <- df_h13 |>
   group_by(id) |>
-  summarise(across(all_of(pred_cols), \(x) {
+  summarise(across(all_of(pred_cols), function(x) {
     v <- !is.na(x) & !is.na(pixel_dist)
     if (sum(v) < 3) return(NA_real_)
     ss_res <- sum((pixel_dist[v] - x[v])^2)
@@ -1147,7 +1176,7 @@ p2 <- df_h13 |>
 p3 <- df_h13 |>
   group_by(id) |>
   summarise(across(all_of(str_replace(pred_cols, "predicted_d_", "err_")),
-                   \(x) mean(x^2, na.rm = TRUE))) |>
+                   function(x) mean(x^2, na.rm = TRUE))) |>
   pivot_longer(-id, names_to = "model", values_to = "mse") |>
   mutate(model = str_remove(model, "^err_")) |>
   ggplot(aes(x = reorder(model, mse, median), y = mse)) +
