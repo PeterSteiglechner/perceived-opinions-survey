@@ -17,25 +17,25 @@ s=lambda d, a, b:  1 -np.exp(-a * d**b)
 sig=lambda d, a,b, c: a / (1 + np.exp(-b * (d-c)))
 l1norm = lambda x: np.sum(np.abs(x[f"deltaX_"]))
 
-LRcuts = [0,0.3,0.7,1.]
+LRcuts = [0,0.33,0.67,1.]
 
 # %%
-df_p = pd.read_csv("processed_data/2026-06-19_data_processed_participant_withAllIssueWeights.csv")
-df_diff = pd.read_csv("processed_data/2026-06-19_data_processed_differences_withAllIssueWeights.csv")
+df_p = pd.read_csv("processed_data/2026-06-19_data_processed_participant_withAllIssueWeights_justParties.csv")
+df_diff = pd.read_csv("processed_data/2026-06-19_data_processed_differences_withAllIssueWeights_justParties.csv")
 # %%
-k = "exp"
-func=s if k=="exp" else linear
-wave = 1
-fig, axs = plt.subplot_mosaic([["a", "b"], ["curve", "curve"]], height_ratios=[1,2], figsize=(16/2.54, 10/2.54))
-for ax, col in zip([axs["a"], axs["b"]], [f"{k}_param1", f"{k}_param2"]): 
-    sns.histplot(df_p, x=col, hue="wave", ax=ax)
-sampleids = df_p.sample(100)["id"].values
-xx = np.linspace(0,1)
-for n,x in df_p.loc[(df_p["id"].isin(sampleids)) & (df_p['wave']==wave)].iterrows():
-    params = (x[f"{k}_param1"], x[f"{k}_param2"] )
-    axs["curve"].plot(xx, func(xx, params[0], params[1]), lw=0.5, alpha=0.4)
-    axs["curve"].set_ylim(0,1)
-    axs["curve"].set_xlim(0,1)
+for k_func in ["exp", "linear"]:
+    func=s if k_func=="exp" else linear
+    wave = 1
+    fig, axs = plt.subplot_mosaic([["a", "b"], ["curve", "curve"]], height_ratios=[1,2], figsize=(16/2.54, 10/2.54))
+    for ax, col in zip([axs["a"], axs["b"]], [f"{k_func}_param1", f"{k_func}_param2"]): 
+        sns.histplot(df_p, x=col, hue="wave", ax=ax)
+    sampleids = df_p.sample(100)["id"].values
+    xx = np.linspace(0,1)
+    for n,x in df_p.loc[(df_p["id"].isin(sampleids)) & (df_p['wave']==wave)].iterrows():
+        params = (x[f"{k_func}_param1"], x[f"{k_func}_param2"] )
+        axs["curve"].plot(xx, func(xx, params[0], params[1]), lw=0.5, alpha=0.4)
+        axs["curve"].set_ylim(0,1)
+        axs["curve"].set_xlim(0,1)
 
 #%%
 # k= "linear"
@@ -59,7 +59,7 @@ for n,x in df_p.loc[(df_p["id"].isin(sampleids)) & (df_p['wave']==wave)].iterrow
 df_p["best_kernel"].value_counts()
 
 #%%
-k="corrP"
+k="corrS"
 # --------- WAVE 1 vs 2 --------------
 alpha_cols = [f"{k}_alpha_{q}" for q in questions_sc]
 fig, ax = plt.subplots(1,1, figsize=(18/2.54, 9/2.54))
@@ -140,9 +140,10 @@ plt.savefig("issue_weights_by_lr.png", dpi=600)
 # %%
 sns.histplot(df_p, x= f"{k}_alpha_climate_concern", y = f"{k}_alpha_rights_indep_integration")
 plt.figure()
-sns.histplot(df_p, x= f"{k}_alpha_econ_inequality", y = f"{k}_alpha_regulate_internet")
+sns.histplot(df_p, x= f"{k}_alpha_east_germans", y = f"{k}_alpha_regulate_internet")
 # %%
 df_p["maxAlpha"] = df_p[alpha_cols].max(axis=1)
+plt.figure()
 sns.histplot(df_p, x="maxAlpha", hue="party_close", palette=party_cmap, kde=True, bins=np.linspace(0,1), stat="proportion", common_norm=False, kde_kws={"cut":0})
 # %%
 
@@ -150,6 +151,7 @@ fig, axs = plt.subplots(5,3, sharex="row", sharey=False, figsize=(16/2.54, 11/2.
 for ax in axs[2,:]:
     ax.axis("off")
 for ax, q in zip(axs[[1,4],:].flatten(), questions_sc):
+    ax.grid("x")
     sns.stripplot(df_p.groupby("party_close")[f"{k}_alpha_{q}"].mean().reset_index(),  x=f"{k}_alpha_{q}", hue="party_close", hue_order=parties_full, palette=party_cmap, ax=ax, legend=False, dodge=True, size=4, marker="s")
     sns.stripplot(df_p, x=f"{k}_alpha_{q}", hue="party_close", hue_order=parties_full, palette=party_cmap, ax=ax, legend=False, dodge=True, size=1)
     ax.set_xlabel(q)
@@ -164,7 +166,7 @@ for ax, q in zip(axs[[0,3],:].flatten(), questions_sc):
     ax.set_yticks([])
     ax.set_ylabel("")
     ax.set_xlabel("")
-ax.set_xlim(0.0,0.5 if not "corr" in k else 1.0)
+    #ax.set_xlim(0.0,0.5 if not "corr" in k else 1.0)
 fig.suptitle(f"weights: {k}")
 # %%
 
@@ -234,4 +236,7 @@ alphas/alphas.sum(axis=1).values[0]
 
 
 
+# %%
+for q in questions_sc:
+    print(q, df_p[[f"w_{q}", f"{k}_alpha_{q}"]].corr().iloc[0,1])
 # %%

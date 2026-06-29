@@ -266,26 +266,42 @@ print("function fit_participant check")
 
 # %% Run for all participants × both kernels
 
-np.random.seed(2)
+np.random.seed(1)
 
 records = []
-for (pid, wave), group in df_diff.groupby(["id", "wave"]):
+for (pid, wave), participant_data in df_diff.groupby(["id", "wave"]):
     for kernel in ["linear", "exp"]:
-        res = fit_participant(group, kernel=kernel, lam=0.0, n_starts=10)
+        participant_party_data = participant_data.query(f"(dot1 in ['self'] or dot1 in {partiesVars}) and dot2 in {partiesVars}")
+        res = fit_participant(participant_party_data, kernel=kernel, lam=0.0, n_starts=10)
         res["id"]   = pid
         res["wave"] = wave
         records.append(res)
+    if pid in np.arange(2000, 200):
+        print(f"({pid}, {wave})", end=", ") 
 
 results = pd.concat(records, ignore_index=True)
 print("... fitting done.")
 
 
+#%%
+# np.random.seed(2)
+
+# records = []
+# for (pid, wave), group in df_diff.groupby(["id", "wave"]):
+#     for kernel in ["linear", "exp"]:
+#         res = fit_participant(group, kernel=kernel, lam=0.0, n_starts=10)
+#         res["id"]   = pid
+#         res["wave"] = wave
+#         records.append(res)
+
+# results = pd.concat(records, ignore_index=True)
+# print("... fitting done.")
 
 #%%
 # store results
-results.to_csv("processed_data/fits_allweights_vif_10starts.csv")
+results.to_csv("processed_data/fits_allweights_vif_10starts_justParties.csv")
 #%%
-results = pd.read_csv("processed_data/fits_allweights_vif_50starts.csv")
+# results = pd.read_csv("processed_data/fits_allweights_vif_50starts.csv")
 # %% Analyse VIF
 
 vif_summary = (
@@ -376,6 +392,7 @@ df_partic_with_alphas = df_partic.merge(alphas_join, on=["id", "wave"], how="lef
 
 corrS_by_group = (
     df_diff
+    .query(f"(dot1 in ['self'] or dot1 in {partiesVars}) and dot2 in {partiesVars}")    
     .groupby(["id", "wave"])
     [[f"pixel_dist"] + [f"deltaX_{q}" for q in questions_sc]]
     .apply(lambda g: g.corr(method='spearman')["pixel_dist"][[f"deltaX_{q}" for q in questions_sc]])
@@ -388,6 +405,7 @@ df_diff2["sumCorrSAlpha"] = df_diff2[[f"corrS_alpha_{q}" for q in questions_sc]]
 
 corrP_by_group = (
     df_diff
+    .query(f"(dot1 in ['self'] or dot1 in {partiesVars}) and dot2 in {partiesVars}")
     .groupby(["id", "wave"])
     [[f"pixel_dist"] + [f"deltaX_{q}" for q in questions_sc]]
     .apply(lambda g: g.corr(method='pearson')["pixel_dist"][[f"deltaX_{q}" for q in questions_sc]])
@@ -413,10 +431,10 @@ df_p3 = df_p3.merge(cond_qs, on = ["id", "wave"])
 
 #%%
 df_p3.to_csv(
-    "processed_data/2026-06-19_data_processed_participant_withAllIssueWeights.csv",
+    "processed_data/2026-06-19_data_processed_participant_withAllIssueWeights_justParties.csv",
     index=False)
 df_diff2.to_csv(
-    "processed_data/2026-06-19_data_processed_differences_withAllIssueWeights.csv",
+    "processed_data/2026-06-19_data_processed_differences_withAllIssueWeights_justParties.csv",
     index=False)
 
 
@@ -512,9 +530,12 @@ for i in range(50):
 exampleFull = results.loc[(results["id"]==id) & (results["wave"]==wave) & (results["param1_name"].isin([kernel, kernel2]))]
 
 fig = plt.figure()
+ax = fig.axes()
 sns.barplot(exampleFull, x="issue", y="alpha", hue="kernel")
-sns.swarmplot(exampleFull, x="issue", y="alpha", size=3, hue="kernel")
+sns.swarmplot(exampleFull, x="issue", y="alpha", size=3, hue="kernel", aax=ax)
 fig.autofmt_xdate()
+
+plt.autofmt_xdate()
 
 
 # %%

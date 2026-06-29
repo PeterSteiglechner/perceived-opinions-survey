@@ -585,10 +585,85 @@ plt.ylim(-0.05,1.05)
 # %%
 # %%
 
-# %%
-# %%
+# %% [markdown]
+# ## Correlations of Hate
 
 # %%
+fig, ax = plt.subplots(1,1)
+sympathy_matrix = df_diff.loc[df_diff.wave==2].pivot_table(columns="party", index="dot2", values="sympathy", aggfunc="mean")
+sns.heatmap(sympathy_matrix.loc[partiesVars, partiesVars], annot=True, cmap="hot_r", cbar_kws={"label":"sympathy"}, ax=ax)
+ax.set_aspect("equal")
+ax.set_ylabel("evaluated party")
+ax.set_xlabel("party participants feel closest to")
+fig.autofmt_xdate()
+
+
 # %%
+fig, (ax1,ax2) = plt.subplots(1,2, sharex=True, sharey=True, figsize=(10,4))
+sympathy_matrix = df_diff.loc[df_diff.wave==2].pivot_table(columns="party", index="dot2", values="sympathy", aggfunc="mean")
+sns.heatmap(sympathy_matrix.loc[partiesVars, partiesVars], annot=True, cmap="hot_r", cbar_kws={"label":"sympathy"}, ax=ax1)
+dist_matrix = df_diff.loc[df_diff.wave==2].pivot_table(columns="party", index="dot2", values="pixel_dist", aggfunc="mean")
+sns.heatmap(dist_matrix.loc[partiesVars, partiesVars], annot=True, cmap="hot", cbar_kws={"label":"pixel distance"}, ax=ax2)
+ax.set_aspect("equal")
+ax.set_ylabel("evaluated party")
+ax.set_xlabel("party participants feel closest to")
+fig.autofmt_xdate()
+
+# %%
+
+cols_to_keep = ["id", "wave"] + [f"std_socialCircle_ops_{q}" for q in questions_sc]
+df_diff = df_diff.merge(df_p[cols_to_keep], on=["id", "wave"], how="left")
+
+# %%
+res = []
+for p in partiesVars:
+    for p_own in partiesVars:
+        a = df_diff.loc[(df_diff.wave==2) & (df_diff.treatment_wave2==False) ].query(f"party=='{p_own}' and dot2=='{p}'")[[f"std_socialCircle_ops_{q}" for q in questions_sc]+["sympathy", "dot2", "party"]]
+        a["overall_std"] = a[[f"std_socialCircle_ops_{q}" for q in questions_sc]].mean(axis=1)
+        res.append([p_own, p, a[["overall_std", "sympathy"]].corr().iloc[0,1]])
+res = pd.DataFrame(res, columns=["party", "dot2", "r_std_sym"])#.describe()
+
+# %%
+
+
+# %%
+fig, ax = plt.subplots(1,1)
+sympathy_matrix = res.pivot_table(columns="party", index="dot2", values="r_std_sym")
+sns.heatmap(sympathy_matrix.loc[partiesVars, partiesVars], annot=True, cmap="coolwarm", vmin=-1, vmax=1, cbar_kws={"label":"correlation: sympathy - std social circle"}, ax=ax, fmt=".2f")
+ax.set_aspect("equal")
+ax.set_ylabel("evaluated party")
+ax.set_xlabel("party participants feel closest to")
+fig.autofmt_xdate()
+
+# %%
+res = []
+for p in partiesVars:
+    for p_own in partiesVars:
+        a = df_diff.loc[(df_diff.wave==1)].query(f"party=='{p_own}' and dot2=='{p}'")[[f"std_socialCircle_ops_{q}" for q in questions_sc]+["pixel_dist", "dot2", "party"]]
+        a["overall_std"] = a[[f"std_socialCircle_ops_{q}" for q in questions_sc]].mean(axis=1)
+        res.append([p_own, p, a[["overall_std", "pixel_dist"]].corr().iloc[0,1]])
+res = pd.DataFrame(res, columns=["party", "dot2", "r_std_dist"])#.describe()
+
+# %%
+fig, ax = plt.subplots(1,1)
+corr_matrix = res.pivot_table(columns="party", index="dot2", values="r_std_dist")
+sns.heatmap(corr_matrix.loc[partiesVars, partiesVars], annot=True, cmap="coolwarm", vmin=-1, vmax=1, cbar_kws={"label":"correlation: distance - std social circle"}, ax=ax, fmt=".2f")
+ax.set_aspect("equal")
+ax.set_ylabel("evaluated party")
+ax.set_xlabel("party participants feel closest to")
+fig.autofmt_xdate()
+
+# %%
+a = df_diff.loc[(df_diff.wave==2) & (df_diff.treatment_wave2==False) ].query(f"party=='AfD' and dot2=='GreenParty'")[[f"std_socialCircle_ops_{q}" for q in questions_sc]+["sympathy", "dot2", "party"]].dropna()
+a["overall_std"] = a[[f"std_socialCircle_ops_{q}" for q in questions_sc]].mean(axis=1)
+sns.lmplot(a, x="overall_std", y="sympathy", height=3)
+plt.title("How AfD like Greens?")
+a = df_diff.loc[(df_diff.wave==2) & (df_diff.treatment_wave2==False) ].query(f"party=='GreenParty' and dot2=='AfD'")[[f"std_socialCircle_ops_{q}" for q in questions_sc]+["sympathy", "dot2", "party"]].dropna()
+a["overall_std"] = a[[f"std_socialCircle_ops_{q}" for q in questions_sc]].mean(axis=1)
+sns.lmplot(a, x="overall_std", y="sympathy", height=3)
+plt.title("How Greens like AfD?")
+
+# %%
+
 
 
