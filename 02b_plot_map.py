@@ -65,7 +65,7 @@ def plot_map(ax, x, q, pos_processed, wave):
             [pos_processed[0, 1]],
             c=colors[0],
             s=10,
-            cmap=plt.get_cmap("coolwarm"),
+            cmap=plt.get_cmap("PRGn"),
             vmin=-100,
             vmax=100,
             marker="X",
@@ -75,7 +75,7 @@ def plot_map(ax, x, q, pos_processed, wave):
             pos_processed[1:, 1],
             c=colors[1:],
             s=10,
-            cmap=plt.get_cmap("coolwarm"),
+            cmap=plt.get_cmap("PRGn"),
             vmin=-100,
             vmax=100,
         )
@@ -120,9 +120,9 @@ fig, axs = plt.subplots(2, 4, figsize=(12 / 2.54, 7 / 2.54), sharex=True, sharey
 id = df.bilendi_id.sample().values[0]
 wave = np.random.choice(df.loc[df.bilendi_id == id, "wave"].values)
 
-#id, wave = (330183866033359, 1)
-id, wave = (331246904848564, 1)
-
+# id, wave = (330183866033359, 1)
+# id, wave = (331246904848564, 1)
+id, wave = (331600764215531 1)
 pos = json.loads(df.loc[df.bilendi_id == id, "player.positions"].values[wave - 1])
 
 pos_processed = {p["varname"].replace(" ", ""): np.array([p["x"], p["y"]]) for p in pos}

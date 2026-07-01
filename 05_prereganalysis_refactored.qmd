@@ -1433,7 +1433,11 @@ cat(sprintf("  Supported : %s\n\n", ifelse(t_h14_2$statistic < 0 && t_h14_2$p.va
 ```
 
 ```{r}
-m <- lm(delta ~ group, data = df_h14)
+df_h14_2 <- df_h14 |> 
+  left_join(df_p|>filter(wave==2)|>select(id,time_between_waves), by = c("id"))|>
+  mutate(time_between_waves_z = scale(time_between_waves)) 
+m <- lm(delta ~ group + time_between_waves_z, data = df_h14_2)
+tidy_print(m)
 summary(m)$r.squared
 ```
 ### H15 

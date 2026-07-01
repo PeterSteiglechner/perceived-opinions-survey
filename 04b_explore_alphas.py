@@ -237,6 +237,8 @@ alphas/alphas.sum(axis=1).values[0]
 
 
 # %%
+k = "exp"
+print(f"Correlation between weights (reported) and alphas (inferred: fitted or calculated, here k={k})")
 for q in questions_sc:
-    print(q, df_p[[f"w_{q}", f"{k}_alpha_{q}"]].corr().iloc[0,1])
+    print(q, f'{df_p[[f"w_{q}", f"{k}_alpha_{q}"]].corr().iloc[0,1]:.2f}',)
 # %%

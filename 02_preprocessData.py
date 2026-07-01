@@ -117,6 +117,8 @@ resdf.loc[resdf.wave == 2, "treatment_wave2"] = df.loc[
     df.wave == 2, "player.treatmentCondition"
 ].astype(int)
 
+inds_both_waves = resdf.loc[resdf.wave==2, "id"].unique()
+resdf["time_between_waves"] = resdf.loc[resdf["id"].isin(inds_both_waves)].groupby("id")["t_completed"].diff().dropna().dt.days
 
 # ----------------------------------------------
 # -------    Training
@@ -129,7 +131,7 @@ def get_dist(x, a, b, v):
     b_pos = [
         np.array([p["x"], p["y"]]) for p in pos if p["varname"].replace(" ", "") == b
     ]
-    if len(a_pos) and len(b_pos):
+    if len(a_pos)==1 and len(b_pos)==1:
         return np.linalg.norm(a_pos[0] - b_pos[0]) / np.sqrt(
             MAX_PIXELPOS**2 + MAX_PIXELPOS**2
         )

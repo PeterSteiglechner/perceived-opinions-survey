@@ -276,7 +276,7 @@ for (pid, wave), participant_data in df_diff.groupby(["id", "wave"]):
         res["id"]   = pid
         res["wave"] = wave
         records.append(res)
-    if pid in np.arange(2000, 200):
+    if pid in np.arange(0, 2000, 200):
         print(f"({pid}, {wave})", end=", ") 
 
 results = pd.concat(records, ignore_index=True)

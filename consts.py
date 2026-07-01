@@ -23,7 +23,7 @@ labelMap = {
     "rights_indep_integration": "migrant rights",
     "econ_inequality": "economic inequality",
     "regulate_internet": "digital regulation", 
-    "east_germans": "East German recognition",
+    "east_germans": "recognition East Germans",
 }
 labelMap_nl = {
     "climate_concern": "climate\nconcern",
