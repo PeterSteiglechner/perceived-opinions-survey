@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 from consts import *
 import numpy as np
 from itertools import combinations
+from scipy.stats import linregress
+from scipy.stats import spearmanr
+from scipy.stats import pearsonr
+import json
 
 plt.rcParams.update({"font.size":9})
 plt.rcParams.update({"figure.figsize":(16/2.54, 9/2.54)})
@@ -19,22 +23,18 @@ sns.set_context("paper")
 # ### Load Data 
 
 # %%
+df_orig =  pd.read_csv("processed_data/2026-05-13_allBilendiData.csv")
+
+# %%
 # %%
 df_p = pd.read_csv("processed_data/2026-06-19_data_processed_participant.csv")
 print("Full Size of participant data: ", df_p.wave.value_counts().to_dict())
 
-#print("size of original data: ", len(df_p_full), " including wave 1 and 2: ", df_p_full["wave"].value_counts().to_dict())
-#df_p = df_p_full.loc[(~df_p_full.excl_double) & (~df_p_full.excl_NA) & (~df_p_full.excl_time)].copy()
-#print(f"Nr of distinct participants: {len(df_p['id'].unique())}")
-#print(f"    after excluding (i) participants with NA opinions ({sum(df_p_full.excl_NA)}) and (ii) participants with less than 1/3 of the median completion time ({sum(df_p_full.excl_time)}) and (iii) double entries (already excluded in preprocessing step)")
-#print("size of updated data: ", len(df_p), " including wave 1 and 2: ", df_p["wave"].value_counts().to_dict())
-# ids_w1 = df_p.loc[df_p.wave==1, "id"].unique()
-# ids_w2 = df_p.loc[df_p.wave==2, "id"].unique()
 inds_bothwaves = df_p["id"].value_counts().reset_index().query("count==2")["id"].tolist()
-# print("Nr of participants who completed both waves: ", len(inds_bothwaves))
 df_p_bothwaves = pd.read_csv("processed_data/2026-06-19_data_processed_participant_pivot.csv").query(f"id in {inds_bothwaves}")
 print("Full Size of across-wave data: ", len(df_p_bothwaves))
-# print(df_p.shape, df_p.columns[50:60])
+
+
 
 # %%
 # %%
@@ -46,8 +46,15 @@ print(len(df_diff.loc[df_diff.wave==1,"id"].unique()))
 print(len(df_diff.loc[df_diff.wave==2,"id"].unique()))
 # print(df_diff.columns)
 
+
+cols_to_keep = ["id", "wave"] + [f"std_socialCircle_ops_{q}" for q in questions_sc]
+cols_to_keep +=  ["average_pixel_dist", "average_pixel_dist_parties"]
+df_diff = df_diff.merge(df_p[cols_to_keep], on=["id", "wave"], how="left")
+df_diff["rel_pixel_dist"] = df_diff["pixel_dist"]/df_diff["average_pixel_dist"]
+df_diff["rel_pixel_distP"] = df_diff["pixel_dist"]/df_diff["average_pixel_dist_parties"]
+
 # %% [markdown]
-# # Time 
+# # Time Variables
 
 # %%
 # %%
@@ -57,11 +64,11 @@ plt.xlabel("time between wave 1 and wave 2 [days]" )
 
 # %%
 # %%
-fig, ax = plt.subplots(1,1, sharex=False)
+fig, ax = plt.subplots(1,1, sharex=False, figsize=(3,2))
 t = 'time_total'
 vmax = np.percentile(df_p.assign(t_div_60=df_p[t] / 60)['t_div_60'].values, 95) * 3
 df_p = df_p.copy()
-sns.histplot(df_p.assign(t_div_60=df_p[t] / 60), x='t_div_60', hue="wave", bins = np.arange(0,vmax,3),  alpha=0.5)
+sns.histplot(df_p.assign(t_div_60=df_p[t] / 60), x='t_div_60', hue="wave", bins = np.arange(0,vmax,3),  alpha=0.5, palette=cmapWave, hue_order=[2,1])
 ax.set_title(t)
 ax.text(0.95,0.95,
         "\n".join([f"{np.sum(df_p.loc[df_p.wave==w, t].values / 60 < vmax)/df_p.loc[df_p.wave==w, t].count()*100:.1f}% with <{vmax:.1f}min (wave {w})" for w in [1,2]]),
@@ -72,11 +79,11 @@ fig.tight_layout()
 print(f"median ({t}): {df_p[t].div(60).median():.2f} (25%-perc: {df_p[t].div(60).describe()['25%']:.2f}, 75%-perc: {df_p[t].div(60).describe()['75%']:.2f})")
 
 times = ['time_trainingGame', 'time_training', 'time_spam', 'time_spam18dots', 'time_pairwise', 'time_pairwise18pairs']
-fig, axs = plt.subplots(2,3, sharex=False)
+fig, axs = plt.subplots(2,3, sharex=False, figsize=(7,3))
 for ax, t in zip(axs.flatten(), times):
     vmax = np.percentile(df_p[t].dropna().values, 95) * 3 / 60
     df_p = df_p.copy()
-    sns.histplot(df_p.assign(t_div_60=df_p[t] / 60), x='t_div_60', hue="wave", bins = np.arange(0,vmax,0.5),  alpha=0.5, ax=ax, legend=False)
+    sns.histplot(df_p.assign(t_div_60=df_p[t] / 60), x='t_div_60', hue="wave", bins = np.arange(0,vmax,0.5),  alpha=0.5, ax=ax, legend=False, palette=cmapWave, hue_order=[2,1])
     ax.set_title(t)
     ax.text(0.95,0.95,
             "\n".join([f"{np.sum(df_p.loc[df_p.wave==w, t].values / 60 < vmax)/df_p.loc[df_p.wave==w, t].count()*100:.1f}% with <{vmax:.1f}min (wave {w})" for w in [1,2]]),
@@ -85,7 +92,7 @@ for ax, t in zip(axs.flatten(), times):
 fig.tight_layout()
 
 display(df_p[times].div(60).describe())
-display(df_p[times].div(60).describe())
+display(df_p[times].describe())
 
 
 # for t in [4,6]:
@@ -96,7 +103,7 @@ display(df_p[times].div(60).describe())
 
 # %% [markdown]
 # 
-# Note: some of the times are negative and should not be negative. This is probably because they reloaded the page and this changed the visited time.
+# Note: some of the times are negative and should not be negative. This is probably because participants re-loaded the page and reloading overwrites the visited time stamp in the dataset.
 
 # %% [markdown]
 # ## Demographics
@@ -108,9 +115,9 @@ display(df_p[times].div(60).describe())
 # %%
 demo_cols = ["gender", "age", "party_vote", "region"]  # participant-level constants
 for d in demo_cols:
-    fig = plt.figure(figsize=(5,2))
+    fig = plt.figure(figsize=(4,1.5))
     ax = plt.axes()
-    sns.histplot(df_p[d], ax=ax)
+    sns.histplot(df_p[d], ax=ax, color=cmapWave[1])
     fig.autofmt_xdate()
 
 # %% [markdown]
@@ -129,7 +136,7 @@ for d, w, name, ax in zip(["party_vote", "party_close", "party_close"], [1,1,2],
 
 # %%
 # %%
-fig, axs = plt.subplots(3,1, figsize=(12/2.54, 12/2.54), sharex=True, sharey=False)
+fig, axs = plt.subplots(3,1, figsize=(14/2.54, 12/2.54), sharex=True, sharey=False)
 for (d1, d2), ax in zip(combinations(["party_vote", "wave1_party_close", "wave2_party_close"], 2), axs):
 
     sns.heatmap(df_p_bothwaves[[d1,d2,"age"]].pivot_table(index=d1,columns=d2, aggfunc="count",values="age").loc[parties_full if "wave" in d1 else parties_vote, parties_full if "wave" in d2 else parties_vote], cmap="Reds", ax=ax, cbar=False,)
@@ -143,8 +150,8 @@ fig.tight_layout()
 # %%
 # %%
 for var in ["lr", "polInterest", "polFrequency", "n_contacts"]:
-    fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
-    sns.histplot(df_p, x=var, hue="wave", ax=axs[0], alpha=0.6)
+    fig, axs = plt.subplots(1,2, figsize=(14/2.54,5/2.54))
+    sns.histplot(df_p, x=var, hue="wave", ax=axs[0], alpha=0.6, palette=cmapWave, hue_order=[2,1], bins=11)
     sns.regplot(df_p_bothwaves[["wave2_"+var, "wave1_"+var]], x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"}, y_jitter=0.2*(var=="n_contacts"), x_jitter=0.2*(var=="n_contacts"))
     axs[1].set_aspect("equal")
     print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
@@ -156,7 +163,7 @@ for var in ["lr", "polInterest", "polFrequency", "n_contacts"]:
 # %%
 for var in ["P_tot"]+[f"P_{q}" for q in questions_sc]:
     fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
-    sns.histplot(df_p, x=var, hue="wave", ax=axs[0], alpha=0.6)
+    sns.histplot(df_p, x=var, hue="wave", ax=axs[0], alpha=0.6, palette=cmapWave, hue_order=[2,1], bins=11)
     sns.regplot(df_p_bothwaves, x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
     axs[1].set_aspect("equal")
     print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
@@ -165,7 +172,7 @@ display(descr1P)
 
 # %%
 # %%
-descr1P.loc[["mean", "std", "50%"]].plot.bar()
+descr1P.loc[["mean", "std", "50%"]].plot.bar(color=["k"]+list(cmapQuestions.values()))
 plt.ylabel("issue polarisation")
 
 # %% [markdown]
@@ -175,7 +182,7 @@ plt.ylabel("issue polarisation")
 # %%
 for var in [f"w_{q}" for q in questions_sc]:
     fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
-    sns.histplot(df_p, x=var, hue="wave", ax=axs[0], alpha=0.6)
+    sns.histplot(df_p, x=var, hue="wave", ax=axs[0], alpha=0.6, palette=cmapWave, hue_order=[2,1])
     sns.regplot(df_p_bothwaves, x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
     axs[1].set_aspect("equal")
     print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
@@ -185,7 +192,7 @@ display(descr1w)
 
 # %%
 # %%
-descr1w.loc[["mean", "std", "50%"]].plot.bar()
+descr1w.loc[["mean", "std", "50%"]].plot.bar(color=cmapQuestions.values())
 plt.ylabel("issue importance")
 
 # %%
@@ -197,7 +204,7 @@ df_p[[f"w_{q}" for  q in questions_sc]].describe()
 var = "sum_issue_importance"
 fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
 df_p[var] = df_p[[f"w_{q}" for  q in questions_sc]].sum(axis=1)
-sns.histplot(df_p,x=var, hue="wave", ax=axs[0], alpha=0.6)
+sns.histplot(df_p,x=var, hue="wave", ax=axs[0], alpha=0.6, palette=cmapWave, hue_order=[2,1])
 aa = df_p.pivot_table(index="id", columns="wave", values=var).rename(columns={1:"wave1", 2:"wave2"})
 sns.regplot(aa, x="wave1", y="wave2", ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
 axs[1].set_aspect("equal")
@@ -206,7 +213,7 @@ fig.tight_layout()
 display(df_p[var].describe())
 
 # %% [markdown]
-# ## Voter Sympathy
+# ## Voter Sympathy/Likeability
 
 # %%
 # %%
@@ -284,11 +291,51 @@ print(f"Fraction of training fails in wave 1: {sum((df_p.wave==1)*(df_p[var]==-9
 # %%
 # %%
 for var in ["attemptsPractice"]:
+    fig, ax = plt.subplots(1,1, figsize=(3,2))
+    sns.histplot(df_p.replace({-999:7}), x=var, hue="wave", ax=ax, palette=cmapWave, bins=np.array([[k-0.35, k+0.35] for k in range(1,8)]).flatten(), alpha=0.6, multiple="dodge", legend=False, stat="count")
+    ax.set_xticks([1,2,3,4,5, 7])
+    ax.set_yticks([])
+    ax.set_xticklabels(["1","2","3","4","5", "failed"])
+    ax.set_xlabel("nr of attempts to pass training")
+    # wave 1 -> left sub-bar of the "failed" group
+    ymax = ax.get_ylim()[1]
+    # wave 1 -> left sub-bar (shorter elbow, drops in closer to the label)
+    ax.annotate(
+        "wave 1",
+        xy=(6.8, df_p.loc[df_p.wave==1, var].value_counts()[-999]), xycoords="data",           # arrow tip on left bar
+        xytext=(6.2, ymax * 0.9), textcoords="data",
+        fontsize=8, ha="right", va="center",
+        arrowprops=dict(
+            arrowstyle="->", color="black", lw=1,
+            connectionstyle="angle,angleA=0,angleB=90,rad=0"
+        )
+    )
+
+    # wave 2 -> right sub-bar (longer horizontal run, sits above wave 1's label)
+    ax.annotate(
+        "wave 2",
+        xy=(7.2, df_p.loc[df_p.wave==2, var].value_counts()[-999]), xycoords="data",             # arrow tip on right bar
+        xytext=(6.2, ymax * 1), textcoords="data",
+        fontsize=8, ha="right", va="center",
+        arrowprops=dict(
+            arrowstyle="->", color="black", lw=1,
+            connectionstyle="angle,angleA=0,angleB=90,rad=0"
+        )
+    )
+    ax.set_ylim(top=ymax * 1.1)  # give headroom for the labels
+    print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].replace({-999:np.nan}).corr().values[1,0]}")
+    plt.tight_layout()
+    plt.savefig("figs/trainingattempts.png", dpi=600 )
+
+# %%
+# %%
+for var in ["attemptsPractice"]:
     fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
 
-    sns.histplot(df_p.replace({-999:8}), x=var, hue="wave", ax=axs[0], bins=0.5+np.arange(0,9), alpha=0.6)
+    sns.histplot(df_p.replace({-999:8}), x=var, hue="wave", ax=axs[0], bins=0.5+np.arange(0,9), alpha=0.6, palette=cmapWave, hue_order=[2,1])
     sns.regplot(df_p_bothwaves[["wave1_"+var, "wave2_"+var]].replace({-999:np.nan}), x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"}, y_jitter=0.2*(var=="attemptsPractice"), x_jitter=0.2*(var=="attemptsPractice"))
     axs[1].set_aspect("equal")
+
     print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].replace({-999:np.nan}).corr().values[1,0]}")
 
 # %%
@@ -304,8 +351,10 @@ vars = [f"dist_practice_{a[0]}-{b[0]}" for a,b in combinations(practice_training
 display(df_p[vars].describe())
 fig = plt.figure(figsize=(6,2))
 df_p[vars].mean().plot.bar(color=plt.get_cmap("tab10").colors)
-plt.xticks(plt.gca().get_xticks(), labels=[s[-3:]+" ("+s[:5]+")"  for s in vars])
+plt.xticks(plt.gca().get_xticks(), labels=[s[-3:]  for s in vars])
+plt.title("Distances between dots in Training (self s, friend f, co-worker c, relative r)")
 fig.autofmt_xdate()
+
 
 # %%
 # %%
@@ -315,11 +364,42 @@ df_p[["wave", "passed_practice_sanity"]].replace({np.nan:"failed training"}).gro
 # # Mapping
 
 # %%
+wave = 2
+ids = df_p.loc[df_p.wave==wave]["id"].sample(9).values
+
+def plot_map(ax, x, q, pos_processed, wave):
+        colors = colorsOrig if q=="" else [x["player."+f"{'own2' if p=='self' else p}__{q}"].values[wave-1] for p in peeps]
+        if q=="":
+            ax.scatter([pos_processed[0,0]],[pos_processed[0,1]], c=colors[0], s=20, marker="X")
+            ax.scatter(pos_processed[1:,0],pos_processed[1:,1], c=colors[1:], s=20, )
+        else:
+            ax.scatter([pos_processed[0,0]],[pos_processed[0,1]], c=colors[0],s=20, cmap=plt.get_cmap("coolwarm"), vmin=-100,vmax=100, marker="X")
+            ax.scatter(pos_processed[1:,0],pos_processed[1:,1], c=colors[1:], s=20, cmap=plt.get_cmap("coolwarm"), vmin=-100,vmax=100, )
+        ax.set_aspect("equal")
+        ax.set_xlim(0,MAX_PIXELPOS)
+        ax.set_ylim(0,MAX_PIXELPOS)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+fig, axs = plt.subplots(3,3, figsize=(12/2.54, 12/2.54), sharex=True, sharey=True)
+for id, ax in zip(ids, axs.flatten()):
+    partic_data = df_orig.loc[(df_orig.wave==wave) & (df_orig.bilendi_id==id)]
+    pos = json.loads(partic_data["player.positions"].values[0])
+    pos_processed = {p["varname"].replace(" ",""):np.array([p["x"], p["y"]]) for p in pos}
+    pos_processed = np.array([[np.nan, np.nan] if k.replace(" ", "") not in pos_processed else pos_processed[k] for k in peeps])
+    # pos_processed_dict = {k: [np.nan, np.nan] if k not in pos_processed else pos_processed[k] for k in peeps}
+
+    plot_map(ax, partic_data, "", pos_processed, np.nan)
+    ax.text(0.0,1.02,f"id: {id} (w{wave})", transform=ax.transAxes, fontsize=5)
+fig.tight_layout(h_pad=1, w_pad=1)
+plt.show()
+
+# %%
 # %%
 vars = ["mappingEnjoy", "mappingEasier", "map_satisfaction"]
 for var in vars:
     fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
-    sns.histplot(df_p,x=var, hue="wave", ax=axs[0], alpha=0.6)
+    sns.histplot(df_p,x=var, hue="wave", ax=axs[0], alpha=0.6, palette=cmapWave, hue_order=[2,1])
     sns.regplot(df_p_bothwaves, x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
     axs[1].set_aspect("equal")
     print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
@@ -332,11 +412,24 @@ for (var1, var2), ax in zip(combinations(vars,2), axs.flatten()):
 fig.tight_layout()
 
 # %%
+fig, axes = plt.subplots(1,3, figsize=(7, 2.), sharey=False, sharex=False)
+vars = ["mappingEnjoy", "mappingEasier", "map_satisfaction"]
+colors = dict(zip(vars, ["green", "olive", "limegreen"]))
+
+for ax, col in zip(axes, vars):
+    sns.histplot(df_p.query(f"wave==1")[col], color=colors[col], bins=11, binrange=[-0.01,1.01] if "satis" in col else [-1.01,1.01], ax=ax, kde=True, linewidth=3, alpha=0.3)
+    ax.set_yticks([])
+    ax.set_ylabel("responses" if "sim" in col else "")
+    ax.set_xlabel(r"I enjoyed the mapping task more"+"\nthan the pairwise task" if "Enjoy" in col else (r"I found the mapping task easier"+"\nthan the pairwise task" if "Easier" in col else r"I am satisfied with the map I created"+"\n"))
+plt.tight_layout()
+plt.savefig("figs/mappingTaskEvaluation.png", dpi=600)
+
+# %%
 # %%
 vars = ["average_pixel_dist", "average_pixel_dist_parties"]
 for var in vars:
     fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
-    sns.histplot(df_p, x=var, hue="wave", ax=axs[0], alpha=0.6)
+    sns.histplot(df_p, x=var, hue="wave", ax=axs[0], alpha=0.6, palette=cmapWave, hue_order=[2,1])
     sns.regplot(df_p_bothwaves, x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
     axs[1].set_aspect("equal")
     print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
@@ -349,40 +442,50 @@ display(df_p[vars].describe())
 vars = ["average_pixel_dist", "average_pixel_dist_parties"]
 for var in vars:
     fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
-    sns.histplot(df_p.loc[df_p["wave"]==2], x=var, hue="treatment_wave2", ax=axs[0], alpha=0.6)
+    sns.histplot(df_p.loc[df_p["wave"]==2], x=var, hue="treatment_wave2", ax=axs[0], alpha=0.6, palette=cmapTreatment)
     for t in [0,1]: 
-        sns.regplot(df_p_bothwaves.loc[df_p_bothwaves.wave2_treatment_wave2==t], x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
+        sns.regplot(df_p_bothwaves.loc[df_p_bothwaves.wave2_treatment_wave2==t], x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"}, color=cmapTreatment[t])
     axs[1].set_aspect("equal")
     print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
     fig.tight_layout()
 
 display(df_p[vars].describe())
 
+# %%
+
+
 # %% [markdown]
 # # Opinions
 
 # %%
 # %%
+# Changes in opinion within the survey wave on slide 1 and slide 5(?)
+
 vars = [f"x_self_{q}" for q in questions_sc]
 varsPrior = [f"first_x_self_{q}" for q in questions_sc]
 wave = 2
-for var, varp in zip(vars, varsPrior):
+for var, varp, q in zip(vars, varsPrior, questions_sc):
     fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
     sns.histplot(df_p[[varp, var]], ax=axs[0], alpha=0.6)
     sns.regplot(df_p, x=varp, y=var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
     axs[1].set_aspect("equal")
     print(f"correlation wave {wave} {var} and {varp}: {df_p[[varp, var]].corr().values[1,0]}")
+    ax.set_title(q)
     fig.tight_layout()
 
+
 print(f"number of people who changed their opinions: {dict(zip(questions_sc, ((np.abs(df_p[[var for  var in vars]].values - df_p[[varp for  varp in varsPrior]].values)>0).sum(axis=0))))}")
+
+# %% [markdown]
+# ### opinion distributions
 
 # %%
 # %%
 vars = [f"x_self_{q}" for q in questions_sc]
-for var in vars:
+for var, q in zip(vars, questions_sc):
     fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
-    sns.histplot(df_p_bothwaves[["wave2_"+var, "wave1_"+var]], ax=axs[0], alpha=0.6)
-    sns.regplot(df_p_bothwaves[["wave2_"+var, "wave1_"+var]], x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
+    sns.histplot(df_p.loc[df_p.id.isin(df_p_bothwaves.id)], x = f"x_self_{q}",ax=axs[0], hue="wave", bins=11, binrange=(-1,1), alpha=0.6,  legend=False, stat="percent", multiple="layer", kde=False, palette=cmapWave, hue_order=[2,1])
+    sns.regplot(df_p_bothwaves[[f"wave{w}_"+var for w in [1,2]]], x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
     axs[1].set_aspect("equal")
     print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
     fig.tight_layout()
@@ -391,9 +494,9 @@ for var in vars:
 
 # %%
 # %%
-fig, axs = plt.subplots(2,2, figsize=(12/2.54,7/2.54), sharex=True, sharey=True)
+fig, axs = plt.subplots(2,3, figsize=(12/2.54,7/2.54), sharex=True, sharey=True)
 for ax, q in zip(axs.flatten(), questions_sc):
-    sns.histplot(df_p, x = f"x_self_{q}", hue="wave", bins=11, binrange=(-1,1), ax=ax, alpha=0.6,  legend=False, stat="percent", multiple="layer", kde=False)
+    sns.histplot(df_p, x = f"x_self_{q}", hue="wave", bins=11, binrange=(-1,1), ax=ax, alpha=0.6,  legend=False, stat="percent", multiple="layer", kde=False, palette=cmapWave, hue_order=[2,1])
     ax.set_title(q)
 fig.suptitle("Own opinions")
 fig.tight_layout()
@@ -437,7 +540,7 @@ for ax, q in zip(axs.flatten(), questions_sc):
 fig.tight_layout()
 
 # %% [markdown]
-# ### Treatment
+# ## Treatment
 
 # %%
 # %%
@@ -472,198 +575,7 @@ for ax, qq in zip(axs.flatten(), questions_sc):
 axs[-1,1].set_xlabel("Treatment")
 fig.tight_layout()
 
-# %%
-# %%
-df_diff["treatment"] = False
-df_diff.loc[df_diff["id"].isin(df_p.loc[df_p.treatment_wave2==1, "id"].tolist()), "treatment"] = True 
-
-plt.figure()
-sns.violinplot(df_diff.loc[df_diff.wave==2], x="treatment", y="sympathy")
-sns.stripplot(df_diff.loc[df_diff.wave==2], x="treatment", y="sympathy",size=1)
-
-# %%
-# %%
-plt.figure()
-q = questions_sc[0]
-sns.violinplot(df_diff.loc[(df_diff.wave==2) & (df_diff.dot2.isin(partiesVars)) & (df_diff.dot1=="self") ], x="treatment", y=f"deltaX_{q}")
-sns.stripplot(df_diff.loc[(df_diff.wave==2) & (df_diff.dot2.isin(partiesVars)) & (df_diff.dot1=="self")], x="treatment", y=f"deltaX_{q}",size=1,)
-
 # %% [markdown]
-# # Map distances
-
-# %%
-# %%
-diff_cols = [f'deltaX_{q}' for q in questions_sc] + ['pixel_dist']
-sns.pairplot(df_diff.sample(500)[diff_cols], plot_kws={'size':0.1}, )
-
-# %%
-# %%
-fig, axs = plt.subplots(2,2, figsize=(7/2.54, 7/2.54))
-df_diff["dottype"] = df_diff.apply(lambda x: "personal" if (("reference" in x['dot1'] or "self" in x["dot1"]) and ("reference" in x['dot2'] or "self" in x["dot2"])) else "voter", axis=1)
-
-hue= None#"dottype"
-hue_order = None#["voter", "personal"] #[2,1]
-mult = "stack"
-sns.histplot(df_diff, x="pairwise_similarity", hue=hue, palette="Set1", hue_order=hue_order, ax=axs[0,0], multiple=mult, kde=True, bins=21)
-axs[0,0].set_xlabel("pairwise similarity")
-
-sns.histplot(df_diff, x="pixel_dist", hue=hue, palette="Set1", hue_order=hue_order, ax=axs[0,1], multiple=mult, kde=True, bins=21)
-axs[0,1].set_xlabel("map distance")
-
-sns.histplot(df_diff, x="sympathy", hue=hue, palette="Set1", hue_order=hue_order, ax=axs[1,0], multiple=mult, kde=True, bins=21)
-axs[1,0].set_xlabel("likability [voters]")
-
-sns.histplot(df_diff, x="socialCloseness", hue=hue, palette="Set1", hue_order=hue_order, ax=axs[1,1], multiple=mult, kde=True, bins=21)
-axs[1,0].set_xlabel("closeness [contacts]")
-
-for ax in axs.flatten():
-    ax.set_ylabel("")
-    ax.set_yticks([])
-    
-
-fig.tight_layout()
-
-# %%
-# %%
-plt.figure()
-diff_cols = [f'deltaX_{q}' for q in questions_sc] + ['pixel_dist']
-diff_cols_names = [fr'$\Delta x$ {q}' for q in qs] + ['map dist']
-mask = np.triu(np.ones_like(df_diff[diff_cols].corr()))
-colsNames = dict(zip(diff_cols, diff_cols_names))
-sns.heatmap(df_diff[diff_cols].corr().rename(columns=colsNames, index=colsNames), annot=True, cmap="hot_r", vmax=1, vmin=0, mask=mask, cbar_kws={'label':"correlation"})
-
-# %%
-# %%
-plt.figure()
-print(f"Correlation between Sympathy and pixel distance of a voter: {df_diff[['sympathy']+['pixel_dist']].corr().iloc[0,1]}")
-sns.lmplot(df_diff, x="pixel_dist", y="sympathy", hue="party", hue_order=partiesVars, palette=party_cmap, order=1, scatter_kws={"s":1, "alpha":0.3 },  y_jitter=0.015 )
-plt.ylim(-0.05,1.05)
-plt.xlim(-0.05,1.05)
-
-# %%
-# %%
-plt.figure()
-print(f"Correlation between Sympathy and pixel distance of a voter: {df_diff[['sympathy']+['pixel_dist']].corr().iloc[0,1]}")
-sns.lmplot(df_diff, x="pixel_dist", y="sympathy", hue="party", hue_order=partiesVars, palette=party_cmap, order=1, scatter_kws={"s":1, "alpha":0.3 },  y_jitter=0.015, logistic=True )
-plt.ylim(-0.05,1.05)
-plt.xlim(-0.05,1.05)
-
-# %%
-# %%
-
-plt.figure()
-sns.histplot(df_diff, x="sympathy", hue="ingroupdummy", palette="Set2",)
-
-# %%
-# %%
-sns.lmplot(df_diff, x="pixel_dist", y="pairwise_similarity", scatter_kws={"marker":".","s":0.1, "alpha":0.1 }, y_jitter=0.01, height=6/2.54, aspect=1,logistic=True,)
-plt.ylim(-0.05,1.05)
-plt.xlim(-0.05,1.05)
-plt.title(f"correlation: {df_diff[['pairwise_similarity']+['pixel_dist']].corr().iloc[0,1]:.2f}", y=0.83)
-plt.xlabel("map distance")
-plt.ylabel("pairwise similarity")
-plt.tight_layout()
-plt.savefig("figs/correlation_pairwise_map.png", dpi=300)
-
-# %%
-# %%
-# fig = plt.figure(figsize=(5/2.54,5/2.54))
-print(f"Correlation between pairwise similarity and pixel distance: {df_diff[['pairwise_similarity']+['pixel_dist']].corr().iloc[0,1]}")
-sns.lmplot(df_diff.loc[df_diff.dot1=="self"], x="pixel_dist", y="pairwise_similarity", scatter_kws={"marker":".","s":1, "alpha":0.1 }, y_jitter=0.01, height=6/2.54, aspect=1)
-plt.ylim(-0.05,1.05)
-plt.title(f"correlation: {df_diff[['pairwise_similarity']+['pixel_dist']].corr().iloc[0,1]:.2f}")
-
-# %%
-# %%
-
-plt.figure(figsize=(16/2.54,9/2.54))
-print(f"Correlation between social closeness and pixel distance: {df_diff[['socialCloseness']+['pixel_dist']].corr().iloc[0,1]}")
-df_diff["lr_cat"] =pd.cut(df_diff.lr, np.linspace(0, 1, 4), right=False, labels=["left", "moderate", "right"])
-sns.lmplot(df_diff, x="pixel_dist", y="socialCloseness", hue="wave", scatter_kws={"s":1, "alpha":0.3 }, y_jitter=0.01, height=3)
-plt.ylim(-0.05,1.05)
-
-# %%
-# %%
-
-# %% [markdown]
-# ## Correlations of Hate
-
-# %%
-fig, ax = plt.subplots(1,1)
-sympathy_matrix = df_diff.loc[df_diff.wave==2].pivot_table(columns="party", index="dot2", values="sympathy", aggfunc="mean")
-sns.heatmap(sympathy_matrix.loc[partiesVars, partiesVars], annot=True, cmap="hot_r", cbar_kws={"label":"sympathy"}, ax=ax)
-ax.set_aspect("equal")
-ax.set_ylabel("evaluated party")
-ax.set_xlabel("party participants feel closest to")
-fig.autofmt_xdate()
-
-
-# %%
-fig, (ax1,ax2) = plt.subplots(1,2, sharex=True, sharey=True, figsize=(10,4))
-sympathy_matrix = df_diff.loc[df_diff.wave==2].pivot_table(columns="party", index="dot2", values="sympathy", aggfunc="mean")
-sns.heatmap(sympathy_matrix.loc[partiesVars, partiesVars], annot=True, cmap="hot_r", cbar_kws={"label":"sympathy"}, ax=ax1)
-dist_matrix = df_diff.loc[df_diff.wave==2].pivot_table(columns="party", index="dot2", values="pixel_dist", aggfunc="mean")
-sns.heatmap(dist_matrix.loc[partiesVars, partiesVars], annot=True, cmap="hot", cbar_kws={"label":"pixel distance"}, ax=ax2)
-ax.set_aspect("equal")
-ax.set_ylabel("evaluated party")
-ax.set_xlabel("party participants feel closest to")
-fig.autofmt_xdate()
-
-# %%
-
-cols_to_keep = ["id", "wave"] + [f"std_socialCircle_ops_{q}" for q in questions_sc]
-df_diff = df_diff.merge(df_p[cols_to_keep], on=["id", "wave"], how="left")
-
-# %%
-res = []
-for p in partiesVars:
-    for p_own in partiesVars:
-        a = df_diff.loc[(df_diff.wave==2) & (df_diff.treatment_wave2==False) ].query(f"party=='{p_own}' and dot2=='{p}'")[[f"std_socialCircle_ops_{q}" for q in questions_sc]+["sympathy", "dot2", "party"]]
-        a["overall_std"] = a[[f"std_socialCircle_ops_{q}" for q in questions_sc]].mean(axis=1)
-        res.append([p_own, p, a[["overall_std", "sympathy"]].corr().iloc[0,1]])
-res = pd.DataFrame(res, columns=["party", "dot2", "r_std_sym"])#.describe()
-
-# %%
-
-
-# %%
-fig, ax = plt.subplots(1,1)
-sympathy_matrix = res.pivot_table(columns="party", index="dot2", values="r_std_sym")
-sns.heatmap(sympathy_matrix.loc[partiesVars, partiesVars], annot=True, cmap="coolwarm", vmin=-1, vmax=1, cbar_kws={"label":"correlation: sympathy - std social circle"}, ax=ax, fmt=".2f")
-ax.set_aspect("equal")
-ax.set_ylabel("evaluated party")
-ax.set_xlabel("party participants feel closest to")
-fig.autofmt_xdate()
-
-# %%
-res = []
-for p in partiesVars:
-    for p_own in partiesVars:
-        a = df_diff.loc[(df_diff.wave==1)].query(f"party=='{p_own}' and dot2=='{p}'")[[f"std_socialCircle_ops_{q}" for q in questions_sc]+["pixel_dist", "dot2", "party"]]
-        a["overall_std"] = a[[f"std_socialCircle_ops_{q}" for q in questions_sc]].mean(axis=1)
-        res.append([p_own, p, a[["overall_std", "pixel_dist"]].corr().iloc[0,1]])
-res = pd.DataFrame(res, columns=["party", "dot2", "r_std_dist"])#.describe()
-
-# %%
-fig, ax = plt.subplots(1,1)
-corr_matrix = res.pivot_table(columns="party", index="dot2", values="r_std_dist")
-sns.heatmap(corr_matrix.loc[partiesVars, partiesVars], annot=True, cmap="coolwarm", vmin=-1, vmax=1, cbar_kws={"label":"correlation: distance - std social circle"}, ax=ax, fmt=".2f")
-ax.set_aspect("equal")
-ax.set_ylabel("evaluated party")
-ax.set_xlabel("party participants feel closest to")
-fig.autofmt_xdate()
-
-# %%
-a = df_diff.loc[(df_diff.wave==2) & (df_diff.treatment_wave2==False) ].query(f"party=='AfD' and dot2=='GreenParty'")[[f"std_socialCircle_ops_{q}" for q in questions_sc]+["sympathy", "dot2", "party"]].dropna()
-a["overall_std"] = a[[f"std_socialCircle_ops_{q}" for q in questions_sc]].mean(axis=1)
-sns.lmplot(a, x="overall_std", y="sympathy", height=3)
-plt.title("How AfD like Greens?")
-a = df_diff.loc[(df_diff.wave==2) & (df_diff.treatment_wave2==False) ].query(f"party=='GreenParty' and dot2=='AfD'")[[f"std_socialCircle_ops_{q}" for q in questions_sc]+["sympathy", "dot2", "party"]].dropna()
-a["overall_std"] = a[[f"std_socialCircle_ops_{q}" for q in questions_sc]].mean(axis=1)
-sns.lmplot(a, x="overall_std", y="sympathy", height=3)
-plt.title("How Greens like AfD?")
-
-# %%
-
+# 
 
 

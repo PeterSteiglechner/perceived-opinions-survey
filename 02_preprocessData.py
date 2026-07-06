@@ -13,6 +13,14 @@ warnings.filterwarnings("ignore", category=PerformanceWarning)
 
 df = pd.read_csv("processed_data/2026-05-13_allBilendiData.csv")
 # %%
+# ----------------------------------------------
+# ----------------------------------------------
+# ----------------------------------------------
+# -------- create participant-level dataset  
+# ----------------------------------------------
+# ----------------------------------------------
+# ----------------------------------------------
+
 
 resdf = df[
     ["bilendi_id", "wave"]
@@ -22,12 +30,6 @@ assert(resdf[["excl_double", "excl_NA", "excl_time"]].sum().sum()==0)
 
 duplicates = resdf[resdf.duplicated(subset=["id", "wave"], keep=False)]
 assert(len(duplicates)==0)
-# print(
-#     f"removed {np.sum(duplicates['excl_double'].astype(int))} data points from "
-#     f"{len(duplicates['id'].unique())} participants. I keep their first complete entry!"
-# )
-# resdf_unique = resdf.loc[~resdf.excl_double.astype(bool)]
-
 
 # ----------------------------------------------
 # -------    TIME
@@ -51,7 +53,7 @@ for tcol, (t0, t1) in tcols.items():
     resdf[tcol] = (df[f"player.{t1}"] - df[f"player.{t0}"]).copy()  # in s
 
 # ----------------------------------------------
-# -------    META
+# -------    meta data
 # ----------------------------------------------
 
 resdf["gender"] = df["S1"].map({"Männlich": "m", "Weiblich": "f", "Divers": "d"})
@@ -70,7 +72,7 @@ resdf["polFrequency"] = df["player.political_discussion"] / MAX_DEFAULTSLIDER
 
 
 # ----------------------------------------------
-# -------    Opinions, Party Opinions, References
+# -------    Opinions, Party Opinions, Social contacts/ References
 # ----------------------------------------------
 
 resdf["n_contacts"] = np.sum(
@@ -159,9 +161,9 @@ resdf["attemptsPractice"] = pd.Categorical(
 )  # -999 not passed
 
 # ----------------------------------------------
-# -------    SPAM
+# -------    spatial arangement mapping
 # ----------------------------------------------
-# include average distance
+
 resdf["average_pixel_dist"] = df.apply(
     lambda x: np.mean(
         [get_dist(x, a, b, "positions") for a, b in combinations(peeps, 2) if not np.isnan(get_dist(x, a, b, "positions"))]
@@ -206,7 +208,7 @@ for q in questions_sc:
     resdf[f"w_{q}"] = df[f"player.importance_{q}"] / MAX_DEFAULTSLIDER
 
 # ----------------------------------------------
-# -------    Sympathy
+# -------    Sympathy/Likability
 # ----------------------------------------------
 for p in partiesVars:
     resdf[f"sym_{p}"] = np.nan
@@ -258,11 +260,16 @@ resdf.to_excel(
 
 # %%
 # ----------------------------------------------
-# -------    DX
+# ----------------------------------------------
+# ----------------------------------------------
+# -------- differences and pixel distance dataset 
+# ----------------------------------------------
+# ----------------------------------------------
 # ----------------------------------------------
 
 
-# Helpers
+# Helper functions
+
 def find_pair_index(pairs, a, b):
     for i, p in enumerate(pairs):
         pp = [p[0].replace(" ", ""), p[1].replace(" ", "")]
@@ -367,7 +374,9 @@ for w in [1, 2]:
 
             dx.append(row)
 print(".done")
+
 # %%
+# collect data and store
 dxdf = pd.DataFrame(dx)
 dxdf["treatment_wave2"] = False
 dxdf.loc[(dxdf.wave==2) & (dxdf["id"].isin(resdf.loc[resdf.treatment_wave2==1, "id"].tolist())), "treatment_wave2"] = True 
@@ -385,5 +394,3 @@ print(dxdf.columns)
 
 # %%
 
-
-# %%
