@@ -305,7 +305,7 @@ for w in [1, 2]:
                     x[[f"player.reference{k}__{q}" for k in range(1, int(x["player.n_references"]) + 1)]]
                     / MAX_OPINIONSLIDER, 
                 )
-        std_socialCircle_ops = {"std_socialCircle_ops_": get_opinionStd_social_circle(data_id_wave, q) for q in questions_sc}
+        std_socialCircle_ops = {f"std_socialCircle_ops_{q}": get_opinionStd_social_circle(data_id_wave, q) for q in questions_sc}
         
         for a, b in combinations(peeps, 2):
             row = {}
@@ -381,11 +381,11 @@ dxdf = pd.DataFrame(dx)
 dxdf["treatment_wave2"] = False
 dxdf.loc[(dxdf.wave==2) & (dxdf["id"].isin(resdf.loc[resdf.treatment_wave2==1, "id"].tolist())), "treatment_wave2"] = True 
 
-dxdf_vlaidrows = dxdf.dropna(subset=["pixel_dist"])
+dxdf_validrows = dxdf.dropna(subset=["pixel_dist"])
 if not os.path.isdir("processed_data/"):
     os.mkdir("processed_data/")
-dxdf_vlaidrows.to_csv("processed_data/2026-06-19_data_processed_differences.csv", index=False)
-dxdf_vlaidrows.to_excel("processed_data/2026-06-19_data_processed_differences.xlsx", index=False)
+dxdf_validrows.to_csv("processed_data/2026-06-19_data_processed_differences.csv", index=False)
+dxdf_validrows.to_excel("processed_data/2026-06-19_data_processed_differences.xlsx", index=False)
 
 # %%
 

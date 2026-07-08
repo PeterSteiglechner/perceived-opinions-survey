@@ -10,8 +10,13 @@ from scipy.stats import linregress
 from scipy.stats import spearmanr
 from scipy.stats import pearsonr
 import json
+from matplotlib.patches import Patch
 
-plt.rcParams.update({"font.size":9})
+
+bigfs = 11
+smallfs = 9
+tinyfs = 7
+plt.rcParams.update({"font.size":smallfs})
 plt.rcParams.update({"figure.figsize":(16/2.54, 9/2.54)})
 sns.set_style("ticks")
 sns.set_context("paper")
@@ -20,7 +25,7 @@ sns.set_context("paper")
 # # Variable Overview
 
 # %% [markdown]
-# ### Load Data 
+# Load Data 
 
 # %%
 df_orig =  pd.read_csv("processed_data/2026-05-13_allBilendiData.csv")
@@ -54,7 +59,7 @@ df_diff["rel_pixel_dist"] = df_diff["pixel_dist"]/df_diff["average_pixel_dist"]
 df_diff["rel_pixel_distP"] = df_diff["pixel_dist"]/df_diff["average_pixel_dist_parties"]
 
 # %% [markdown]
-# # Time Variables
+# ## Time Analyses
 
 # %%
 # %%
@@ -112,6 +117,12 @@ display(df_p[times].describe())
 # ### Age Gender Region (bilendi meta-data)
 
 # %%
+wavecondition = "wave in [1]" 
+print("Age: ", df_p.query(wavecondition)["age"].describe())
+print("Gender: ", (df_p.query(wavecondition)["gender"].value_counts().sort_values(ascending=False)/df_p.query("wave==1")["region"].count()).to_dict())
+print("Region: ", (df_p.query(wavecondition)["region"].value_counts().sort_values(ascending=False)/df_p.query("wave==1")["region"].count()).to_dict())
+
+# %%
 # %%
 demo_cols = ["gender", "age", "party_vote", "region"]  # participant-level constants
 for d in demo_cols:
@@ -122,6 +133,19 @@ for d in demo_cols:
 
 # %% [markdown]
 # ### Parties / political identity
+
+# %%
+wavecondition = "wave in [1]" 
+partyPrefsVote = df_p.query(wavecondition)["party_vote"].value_counts().sort_values(ascending=False)
+partyPrefsClose = df_p.query(wavecondition)["party_close"].value_counts().sort_values(ascending=False)
+partyPrefs = (
+    partyPrefsVote.to_frame("vote")
+    .join(partyPrefsClose.to_frame("close"), how="outer")
+    .fillna(0).astype(int)
+    .sort_values("vote", ascending=False)
+)
+print("Party Vote/Close: ", partyPrefs)
+print("Party Vote/Close Fraction: ",partyPrefs/ partyPrefs.sum(axis=0))
 
 # %%
 # %%
@@ -157,7 +181,248 @@ for var in ["lr", "polInterest", "polFrequency", "n_contacts"]:
     print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
 
 # %% [markdown]
-# ### Polarisation
+# ## Opinions
+
+# %% [markdown]
+# #### opinion change within survey
+
+# %%
+# %%
+# Changes in opinion within the survey wave on slide 1 and slide 5(?)
+
+vars = [f"x_self_{q}" for q in questions_sc]
+varsPrior = [f"first_x_self_{q}" for q in questions_sc]
+wave = 2
+for var, varp, q in zip(vars, varsPrior, questions_sc):
+    fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
+    sns.histplot(df_p[[varp, var]], ax=axs[0], alpha=0.6)
+    sns.regplot(df_p, x=varp, y=var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
+    axs[1].set_aspect("equal")
+    print(f"correlation wave {wave} {var} and {varp}: {df_p[[varp, var]].corr().values[1,0]}")
+    ax.set_title(q)
+    fig.tight_layout()
+
+
+print(f"number of people who changed their opinions: {dict(zip(questions_sc, ((np.abs(df_p[[var for  var in vars]].values - df_p[[varp for  varp in varsPrior]].values)>0).sum(axis=0))))}")
+
+# %% [markdown]
+# ### Own Opinion Distributions
+
+# %%
+# %%
+vars = [f"x_self_{q}" for q in questions_sc]
+for var, q in zip(vars, questions_sc):
+    fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
+    sns.histplot(df_p.loc[df_p.id.isin(df_p_bothwaves.id)], x = f"x_self_{q}",ax=axs[0], hue="wave", bins=11, binrange=(-1,1), alpha=0.6,  legend=False, stat="percent", multiple="layer", kde=False, palette=cmapWave, hue_order=[2,1])
+    sns.regplot(df_p_bothwaves[[f"wave{w}_"+var for w in [1,2]]], x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
+    axs[1].set_aspect("equal")
+    print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
+    fig.tight_layout()
+
+# display(df_p[[var for  var in vars]].describe())
+
+# %%
+wavecondition = "wave in [1]"
+
+op_cols = [f"x_self_{q}" for q in questions_sc]
+fig, axes = plt.subplots(2, 3, figsize=(7, 3.5), sharey=True, sharex=True)
+axes = axes.flatten()
+
+for ax, col, q in zip(axes, op_cols, questions_sc):
+    sns.histplot(
+        df_p.query(wavecondition)[col].dropna(),
+        ax=ax,
+        bins=11,
+        binrange=(-1.01, 1.01),
+        # kde=True,
+        stat="density",      # makes KDE and bars scale together properly
+        color=cmapQuestions[q],
+        alpha=0.5,
+    )
+    ax.set_title(labelMap[q], bbox=dict(facecolor=cmapQuestions[q], alpha=0.3, edgecolor='none', pad=4), fontsize=bigfs)    
+    ax.set_xlim(-1, 1) 
+    ax.set_yticks([])
+    ax.set_ylabel("")
+    ax.set_xlabel("")
+    ax.tick_params(axis="x")
+
+axes[-2].set_xlabel("own opinions", fontsize=bigfs)
+fig.tight_layout()
+plt.savefig("figs/ownOps.png")
+
+# %% [markdown]
+# ### Opinions of Voters
+
+# %%
+# %%
+fig, axs = plt.subplots(2,3, figsize=(16/2.54,8/2.54), sharex=True, sharey=True)
+for ax, q in zip(axs.flatten(), questions_sc):
+    a = df_p[[f"x_{p}_{q}" for p in partiesVars]].melt(var_name="party", )
+    a["party"]= a["party"].apply(lambda x: x.split("_")[1])
+    sns.histplot(a, x="value", hue="party", palette=party_cmap, hue_order=partiesVars, bins=11, binrange=(-1,1), ax=ax, alpha=0.6, legend=False, stat="percent", multiple="layer", kde=False)
+    ax.set_title(labelMap[q], bbox=dict(facecolor=cmapQuestions[q], alpha=0.3, edgecolor='none', pad=4), fontsize=bigfs)    
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_yticks([])
+fig.suptitle("What are the opinions of a typical voter of party...?")
+fig.tight_layout()
+
+# %%
+fig, axs = plt.subplots(2, 3, figsize=(8, 3.5), sharey=False, sharex=True)
+axes = axs.flatten()
+
+for ax, q in zip(axes, questions_sc):
+    op_cols_p = [f"x_{r}_{q}" for r in partiesVars]
+    sns.kdeplot(
+        df_p.query(wavecondition)[op_cols_p].dropna().melt().replace(dict(zip(op_cols_p, partiesVars))),
+        x="value",
+        hue="variable",
+        palette=party_cmap,
+        ax=ax,
+        fill=True,
+        alpha=0.02,
+        lw=2,
+        legend=False,   # suppress all in-plot legends
+    )
+
+    ax.set_title(labelMap[q], bbox=dict(facecolor=cmapQuestions[q], alpha=0.3, edgecolor='none', pad=4), fontsize=bigfs)    
+    ax.set_xlim(-1, 1)
+    ax.set_yticks([])
+    ax.set_ylabel("")
+    ax.set_xlabel("")
+    ax.tick_params(axis="x")
+
+axs[-1,1].set_xlabel("Perceived Opinion of Typical Voter", fontsize=bigfs)
+# Build legend handles manually from the last axis
+handles = [
+    Patch(facecolor=party_cmap[p], alpha=0.4, label=p)
+    for p in partiesVars
+]
+fig.legend(
+    handles, partiesVars,
+    loc="center left",
+    bbox_to_anchor=(0.82, 0.5),   # just outside the right edge
+    frameon=False,
+)
+
+fig.tight_layout(pad=0.6)
+fig.subplots_adjust(right=0.82)  # make room for the legend
+plt.savefig("figs/partyOps.png")
+
+# %%
+# %%
+fig, axs = plt.subplots(2,2, figsize=(16/2.54,14/2.54), sharex=True, sharey=True)
+fig.suptitle("What are the opinions of a typical voter of party...?")
+for ax, q in zip(axs.flatten(), questions_sc):
+    a = df_p[[f"x_{p}_{q}" for p in partiesVars]].melt(var_name="party")
+    a["party"]= a["party"].apply(lambda x: x.split("_")[1])
+    sns.violinplot(a, x="value", y="party", hue="party", fill=False, inner=None, palette=party_cmap, hue_order=partiesVars, ax=ax, legend=False, cut=0, )
+    sns.stripplot(a, x="value", y="party", hue="party", palette=party_cmap, hue_order=partiesVars, ax=ax, legend=False, size=1)
+    ax.set_title(q)
+fig.tight_layout()
+
+# %% [markdown]
+# # Std Dev of Opinions in social circles
+
+# %%
+wavecondition = "wave in [1]"
+stdSC_cols = [f"std_socialCircle_ops_{q}" for q in questions_sc]
+fig, axes = plt.subplots(2, 3, figsize=(7, 3.5), sharey=True, sharex=True)
+axes = axes.flatten()
+df_p["treatment_wave2_str"] = df_p["treatment_wave2"].map({1.0:"T", 0.0:"C", np.nan: "w1"})
+for ax, col, q in zip(axes, stdSC_cols, questions_sc):
+    sns.histplot(
+        df_p.query(wavecondition)[[col, "treatment_wave2_str"]].dropna(),
+        x=col,
+        ax=ax,
+        bins=11,
+        binrange=(0, 1.),
+        kde=True,
+        stat="density",      # makes KDE and bars scale together properly
+        # color="orange",
+        hue="treatment_wave2_str",
+        palette={"T":"magenta", "C":"brown", "w1":"orange"},
+        alpha=0.5,
+        legend=False
+    )
+    mean_T = df_p.query(wavecondition+" and treatment_wave2_str=='T'")[col].dropna().mean()
+    mean_C = df_p.query(wavecondition+" and treatment_wave2_str=='C'")[col].dropna().mean()
+    mean_w1 = df_p.query(wavecondition+" and treatment_wave2_str=='w1'")[col].dropna().mean()
+    for meanval, col, y, label in zip([mean_T, mean_C, mean_w1], ["magenta", "gold", "orange"], [0.8,0.65, 1], ["T", "C", "{w1}"]):
+        ax.vlines(
+            meanval,
+            0,2.55,
+            color=col if "2" in wavecondition else "darkorange",
+            linestyles="--"
+        )
+        s = '{SD}'
+        add = ""#f"_{label}"
+        ax.text(meanval-0.05, 2.5, rf"   $\overline{s}{add}$:"+f" {meanval:.2f}", ha='left', va='bottom', color=col)
+    
+
+    ax.set_title(labelMap[q], bbox=dict(facecolor=cmapQuestions[q], alpha=0.3, edgecolor='none', pad=4), fontsize=bigfs)    
+    ax.set_xlim(0, 1.) 
+    ax.set_yticks([])
+    ax.set_ylabel("")
+    ax.set_xlabel("")
+    ax.tick_params(axis="x")
+    # ax.text( df_p.query(wavecondition)[col].dropna().mean(), 2.8, f" mean: {df_p.query(wavecondition)[col].dropna().mean():.2f}", ha='left', va='top')
+axes[-2].set_xlabel("std opinions social circle")
+print("social circle std")
+fig.tight_layout()
+plt.savefig("figs/socialvarOps.png")
+
+# %%
+# %%
+fig, axs = plt.subplots(2,3, figsize=(16/2.54,14/2.54), sharex=True, sharey=True)
+fig.suptitle("Std Dev of Opinions in social circles")
+
+for ax, q in zip(axs.flatten(), questions_sc):
+    a = df_p[[f"std_socialCircle_ops_{q}"]+[f"party_close"]].melt(var_name="social circle", id_vars=[f"party_close"])
+    sns.violinplot(a, x="value", y=f"party_close", hue=f"party_close", fill=False,  palette=party_cmap, hue_order=parties_full, ax=ax, legend=False, cut=0, inner="quart", order=parties_full)
+    sns.stripplot(a, x="value", y=f"party_close", hue=f"party_close", palette=party_cmap, hue_order=parties_full, ax=ax, legend=False, size=1)
+    sns.stripplot(a.groupby(f"party_close")["value"].mean().reset_index(), x="value", y=f"party_close", hue=f"party_close", palette=party_cmap, hue_order=parties_full, ax=ax, legend=False, size=5, marker="s")
+    ax.set_title(q)
+    ax.tick_params(axis='y', labelsize=tinyfs)
+    ax.set_ylabel("")
+fig.tight_layout()
+
+# %% [markdown]
+# ## Treatment
+
+# %%
+# %%
+print(f"Treatment: {df_p['treatment_wave2'].value_counts().to_dict()}")
+
+# %%
+# %%
+fig, ax = plt.subplots(1,1, figsize=(16/2.54,7/2.54))
+ax.set_title("Std Dev of Opinions in social circles")
+a = df_p[[f"std_socialCircle_ops_{q}" for q in questions_sc]+["treatment_wave2"]].melt(var_name="question", id_vars=[f"treatment_wave2"])
+a["question"]= a["question"].apply(lambda x: labelMap["_".join(x.split("_")[3:])])
+a = a.dropna()
+sns.violinplot(a, x="value",  y="question",split=True, hue="treatment_wave2", fill=False,   ax=ax, legend=False, cut=0, inner="quart", palette=cmapTreatment, hue_order=[True,False])
+sns.stripplot(a, x="value",  y="question",  hue=f"treatment_wave2",  ax=ax, legend=False, size=0.6, dodge=True, jitter=0.3, palette=cmapTreatment, hue_order=[True,False])
+sns.stripplot(a.groupby([f"treatment_wave2", "question"])["value"].mean().reset_index(), x="value", y=f"question", hue=f"treatment_wave2", ax=ax, legend=True, size=5, marker="s", palette=cmapTreatment, hue_order=[True,False], jitter=False)
+ax.set_ylabel("")
+fig.tight_layout()
+
+fig, axs = plt.subplots(2,3, sharex=True, sharey=True, figsize=(16/2.54, 8/2.54))
+df_p["treatment_wave2"] = df_p["treatment_wave2"].astype(bool)
+for ax, q in zip(axs.flatten(), questions_sc):
+    sns.boxplot(df_p, x="treatment_wave2", y=f"std_socialCircle_ops_{q}", hue = "treatment_wave2", ax=ax, fill=False, whis=[5,95], fliersize=0, palette=cmapTreatment, hue_order=[1,0], legend=False)
+    sns.stripplot(df_p, x="treatment_wave2", y=f"std_socialCircle_ops_{q}", ax=ax, hue = "treatment_wave2", size=1,alpha=0.3, palette=cmapTreatment, hue_order=[True,False], legend=False)
+    sns.stripplot(df_p.groupby("treatment_wave2")[f"std_socialCircle_ops_{q}"].mean().reset_index(), x="treatment_wave2", y=f"std_socialCircle_ops_{q}", hue = "treatment_wave2", edgecolor="k", linewidth=1, ax=ax, size=4, marker="s",alpha=1, palette=cmapTreatment, hue_order=[True,False], legend=False)
+    ax.set_title(labelMap[q], bbox=dict(facecolor=cmapQuestions[q], alpha=0.3, edgecolor='none', pad=4), fontsize=bigfs)    
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+axs[0,0].set_ylabel(r"social circle opinion std $SD$", y=-0)
+axs[-1,1].set_xlabel("Treatment")
+fig.tight_layout()
+plt.savefig("figs/SD_treatment.png", dpi=600)
+
+# %% [markdown]
+# ## Polarisation
 
 # %%
 # %%
@@ -194,6 +459,9 @@ display(descr1w)
 # %%
 descr1w.loc[["mean", "std", "50%"]].plot.bar(color=cmapQuestions.values())
 plt.ylabel("issue importance")
+
+# %%
+cmapQuestions
 
 # %%
 # %%
@@ -451,129 +719,40 @@ for var in vars:
 
 display(df_p[vars].describe())
 
-# %%
-
-
 # %% [markdown]
-# # Opinions
+# # Social Closeness
 
 # %%
-# %%
-# Changes in opinion within the survey wave on slide 1 and slide 5(?)
+fig, axs = plt.subplots(1,4, figsize=(18/2.54, 5/2.54))
+df_diff["dottype"] = df_diff.apply(lambda x: "personal" if (("reference" in x['dot1'] or "self" in x["dot1"]) and ("reference" in x['dot2'] or "self" in x["dot2"])) else "voter", axis=1)
 
-vars = [f"x_self_{q}" for q in questions_sc]
-varsPrior = [f"first_x_self_{q}" for q in questions_sc]
-wave = 2
-for var, varp, q in zip(vars, varsPrior, questions_sc):
-    fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
-    sns.histplot(df_p[[varp, var]], ax=axs[0], alpha=0.6)
-    sns.regplot(df_p, x=varp, y=var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
-    axs[1].set_aspect("equal")
-    print(f"correlation wave {wave} {var} and {varp}: {df_p[[varp, var]].corr().values[1,0]}")
-    ax.set_title(q)
-    fig.tight_layout()
+hue= None #"dottype"
+hue_order = None #["voter", "personal"] #[2,1]
+cmap =  "#1f78b4" # {"voter":"k", "personal":party_cmap["contact"]}#
+mult = "stack"
+sns.histplot(df_diff, x="pairwise_similarity", hue=hue, palette=cmap, color=cmap, hue_order=hue_order, ax=axs[0], multiple=mult, kde=True, bins=21)
+axs[0].set_xlabel("pairwise similarity")
+
+sns.histplot(df_diff, x="pixel_dist", hue=hue, palette=cmap, color=cmap,hue_order=hue_order, ax=axs[1], multiple=mult, kde=True, bins=21)
+axs[1].set_xlabel("map distance")
+
+sns.histplot(df_diff, x="sympathy", hue=hue, palette=cmap, color=cmap,hue_order=hue_order, ax=axs[2], multiple=mult, kde=True, bins=21)
+axs[2].set_xlabel("likability [voters]")
 
 
-print(f"number of people who changed their opinions: {dict(zip(questions_sc, ((np.abs(df_p[[var for  var in vars]].values - df_p[[varp for  varp in varsPrior]].values)>0).sum(axis=0))))}")
+sns.histplot(df_diff, x="socialCloseness", hue=hue, palette=cmap, color=cmap,hue_order=hue_order, ax=axs[3], multiple=mult, kde=True, bins=21)
+axs[3].set_xlabel("social closness [contacts]")
 
-# %% [markdown]
-# ### opinion distributions
+for ax in axs.flatten():
+    ax.set_ylabel("")
+    ax.set_yticks([])
+    
 
-# %%
-# %%
-vars = [f"x_self_{q}" for q in questions_sc]
-for var, q in zip(vars, questions_sc):
-    fig, axs = plt.subplots(1,2, figsize=(16/2.54,6/2.54))
-    sns.histplot(df_p.loc[df_p.id.isin(df_p_bothwaves.id)], x = f"x_self_{q}",ax=axs[0], hue="wave", bins=11, binrange=(-1,1), alpha=0.6,  legend=False, stat="percent", multiple="layer", kde=False, palette=cmapWave, hue_order=[2,1])
-    sns.regplot(df_p_bothwaves[[f"wave{w}_"+var for w in [1,2]]], x="wave1_"+var, y="wave2_"+var, ax=axs[1], scatter_kws={"s":3, "alpha":0.5, "color":"grey"})
-    axs[1].set_aspect("equal")
-    print(f"correlation wave 2 wave 1 {var}: {df_p_bothwaves[['wave2_'+var, 'wave1_'+var]].corr().values[1,0]}")
-    fig.tight_layout()
-
-# display(df_p[[var for  var in vars]].describe())
-
-# %%
-# %%
-fig, axs = plt.subplots(2,3, figsize=(12/2.54,7/2.54), sharex=True, sharey=True)
-for ax, q in zip(axs.flatten(), questions_sc):
-    sns.histplot(df_p, x = f"x_self_{q}", hue="wave", bins=11, binrange=(-1,1), ax=ax, alpha=0.6,  legend=False, stat="percent", multiple="layer", kde=False, palette=cmapWave, hue_order=[2,1])
-    ax.set_title(q)
-fig.suptitle("Own opinions")
 fig.tight_layout()
 
-# %%
-# %%
-fig, axs = plt.subplots(2,3, figsize=(16/2.54,8/2.54), sharex=True, sharey=True)
-for ax, q in zip(axs.flatten(), questions_sc):
-    a = df_p[[f"x_{p}_{q}" for p in partiesVars]].melt(var_name="party", )
-    a["party"]= a["party"].apply(lambda x: x.split("_")[1])
-    sns.histplot(a, x="value", hue="party", palette=party_cmap, hue_order=partiesVars, bins=11, binrange=(-1,1), ax=ax, alpha=0.6, legend=False, stat="percent", multiple="layer", kde=False)
-    ax.set_title(q)
-fig.suptitle("What are the opinions of a typical voter of party...?")
-fig.tight_layout()
 
 # %%
-# %%
-fig, axs = plt.subplots(2,2, figsize=(16/2.54,14/2.54), sharex=True, sharey=True)
-fig.suptitle("What are the opinions of a typical voter of party...?")
-for ax, q in zip(axs.flatten(), questions_sc):
-    a = df_p[[f"x_{p}_{q}" for p in partiesVars]].melt(var_name="party")
-    a["party"]= a["party"].apply(lambda x: x.split("_")[1])
-    sns.violinplot(a, x="value", y="party", hue="party", fill=False, inner=None, palette=party_cmap, hue_order=partiesVars, ax=ax, legend=False, cut=0, )
-    sns.stripplot(a, x="value", y="party", hue="party", palette=party_cmap, hue_order=partiesVars, ax=ax, legend=False, size=1)
-    ax.set_title(q)
-fig.tight_layout()
-
-# %% [markdown]
-# # Std Dev of Opinions in social circles
-
-# %%
-# %%
-fig, axs = plt.subplots(2,3, figsize=(16/2.54,14/2.54), sharex=True, sharey=True)
-fig.suptitle("Std Dev of Opinions in social circles")
-for ax, q in zip(axs.flatten(), questions_sc):
-    a = df_p[[f"std_socialCircle_ops_{q}"]+[f"party_close"]].melt(var_name="social circle", id_vars=[f"party_close"])
-    sns.violinplot(a, x="value", y=f"party_close", hue=f"party_close", fill=False,  palette=party_cmap, hue_order=parties_full, ax=ax, legend=False, cut=0, inner="quart", order=parties_full)
-    sns.stripplot(a, x="value", y=f"party_close", hue=f"party_close", palette=party_cmap, hue_order=parties_full, ax=ax, legend=False, size=1)
-    sns.stripplot(a.groupby(f"party_close")["value"].mean().reset_index(), x="value", y=f"party_close", hue=f"party_close", palette=party_cmap, hue_order=parties_full, ax=ax, legend=False, size=5, marker="s")
-    ax.set_title(q)
-fig.tight_layout()
-
-# %% [markdown]
-# ## Treatment
-
-# %%
-# %%
-print(f"Treatment: {df_p['treatment_wave2'].value_counts().to_dict()}")
-
-# %%
-# %%
-fig, ax = plt.subplots(1,1, figsize=(16/2.54,14/2.54))
-ax.set_title("Std Dev of Opinions in social circles")
-a = df_p[[f"std_socialCircle_ops_{q}" for q in questions_sc]+["treatment_wave2"]].melt(var_name="question", id_vars=[f"treatment_wave2"])
-a["question"]= a["question"].apply(lambda x: "_".join(x.split("_")[3:]))
-a = a.dropna()
-print(len(a))
-sns.violinplot(a, x="value",  y="question",split=True, hue="treatment_wave2", fill=False,   ax=ax, legend=False, cut=0, inner="quart")
-sns.stripplot(a, x="value",  y="question",  hue=f"treatment_wave2",  ax=ax, legend=False, size=1, dodge=True)
-sns.stripplot(a.groupby([f"treatment_wave2", "question"])["value"].mean().reset_index(), x="value", y=f"question", hue=f"treatment_wave2", ax=ax, legend=True, size=5, marker="s")
-fig.tight_layout()
-
-# %%
-# %%
-fig, axs = plt.subplots(2,3, sharex=True, sharey=True)
-w=2
-fig.suptitle("ALTERNATIVE: Std Dev of Opinions in social circles")
-
-for ax, qq in zip(axs.flatten(), questions_sc):
-    sns.boxplot(df_p, x="treatment_wave2", y=f"std_socialCircle_ops_{qq}", ax=ax, fill=False, whis=[5,95], fliersize=0)
-    sns.stripplot(df_p, x="treatment_wave2", y=f"std_socialCircle_ops_{qq}", ax=ax, size=1,alpha=0.3)
-    sns.stripplot(df_p.groupby("treatment_wave2")[f"std_socialCircle_ops_{qq}"].mean().reset_index(), x="treatment_wave2", y=f"std_socialCircle_ops_{qq}", ax=ax, size=10, marker="s",alpha=0.4)
-    ax.set_title(qq)
-    ax.set_xlabel("")
-    ax.set_ylabel("social circle opinion std")
-axs[-1,1].set_xlabel("Treatment")
-fig.tight_layout()
+df_diff.socialCloseness
 
 # %% [markdown]
 # 

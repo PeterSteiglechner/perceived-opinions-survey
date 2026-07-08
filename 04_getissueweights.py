@@ -295,7 +295,7 @@ for mode in ["fitAllDots", "fitPartyDots"]:
             res["wave"] = wave
             records.append(res)
         counter+=1
-        if wave==1 and pid in df_p["id"].unique()[::50]:
+        if wave==1 and pid in df_partic["id"].unique()[::50]:
             print(f"{counter}", end=", ") 
 
     results = pd.concat(records, ignore_index=True)
@@ -369,7 +369,8 @@ for mode in ["fitAllDots", "fitPartyDots"]:
         for a, b in alphas_join.columns
     ]
     alphas_join.columns = alphas_join.columns.str.replace("alpha_deltaX_", "alpha_")
-    alphas_join.columns = alphas_join.columns.str.replace(f"alpha_{mode}_deltaX_", f"alpha_{mode}")
+    alphas_join.columns = alphas_join.columns.str.replace(f"alpha_{mode}_deltaX_", f"alpha_{mode}_")
+    alphas_join.columns = alphas_join.columns.str.replace(f"_converged", f"_{mode}_converged")
     
 
     # Pick best kernel per participant × wave

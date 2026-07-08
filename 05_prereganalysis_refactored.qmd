@@ -216,9 +216,10 @@ df_p <- df_p |>
     across(all_of(col_var_std), function(x) x^2,
            .names = "var_{gsub('std_', '', col)}"),
     wave = factor(wave)
-  ) |> 
-    rename_with(~ str_replace(., "alpha_deltaX_", "alpha_"))|> 
-    rename_with(~ str_replace(., paste0("alpha_", fitmode,"_deltaX_"), paste0("alpha_", fitmode, "_")))
+  ) 
+  # |> 
+  #   rename_with(~ str_replace(., "alpha_deltaX_", "alpha_"))|> 
+  #   rename_with(~ str_replace(., paste0("alpha_", fitmode,"_deltaX_"), paste0("alpha_", fitmode, "_")))
 
 
 df_diff <- read.csv(
@@ -231,11 +232,13 @@ df_diff <- read.csv(
   left_join(
     df_p |> select(id, wave,
                    all_of(paste0("var_socialCircle_ops_",  questions_sc)),
-                   all_of(paste0("std_socialCircle_ops_", questions_sc))),
+                  #  all_of(paste0("std_socialCircle_ops_", questions_sc))
+                  ),
     by = c("id", "wave")
-  ) |> 
-      rename_with(~ str_replace(., "alpha_deltaX_", "alpha_"))|> 
-      rename_with(~ str_replace(., paste0("alpha_", fitmode,"_deltaX_"), paste0("alpha_", fitmode, "_")))
+  ) 
+  # |> 
+  #     rename_with(~ str_replace(., "alpha_deltaX_", "alpha_"))|> 
+  #     rename_with(~ str_replace(., paste0("alpha_", fitmode,"_deltaX_"), paste0("alpha_", fitmode, "_")))
 
 ```
 
@@ -1200,16 +1203,17 @@ df_h13_base <- df_diff |>
 .a_fit_exp <- as.matrix(df_h13_base[, col_alpha_exp])
 .a_fit_lin <- as.matrix(df_h13_base[, col_alpha_lin])
 .a_fit_log <- as.matrix(df_h13_base[, col_alpha_log])
-.a_weights <- {
+.a_weights_rel <- {
   w <- as.matrix(df_h13_base[, col_weights])
   w_sum <- rowSums(w, na.rm = TRUE)
   ifelse(w_sum == 0, 0, w / w_sum)
 }
+.a_weights <- as.matrix(df_h13_base[, col_weights])
 
-pred_cols <- c("weights", "population_exp",
+pred_cols <- c("weights", "weightsrel", "population_exp",
                "population_linear", "population_logistic", "uniform_exp",
-               "uniform_linear", "fit_linear",
-               "fit_exp", "corrP", "corrPrel")
+               "uniform_linear", "uniform_logistic", "fit_linear",
+               "fit_exp", "fit_logistic", "corrP", "corrPrel")
 p <- function(prefix, n) {
   df_h13_base[[paste0(prefix, "_", fitmode, "_param", n)]]
 }
@@ -1225,14 +1229,99 @@ df_h13 <- df_h13_base |>
     fit_exp                = exp_kernel(rowSums(.d * .a_fit_exp),      p("exp", 1),      p("exp", 2)),
     fit_linear              = linear_kernel(rowSums(.d * .a_fit_lin),   p("linear", 1),    p("linear", 2)),
     fit_logistic            = log_kernel(rowSums(.d * .a_fit_log),   p("logistic", 1),  p("logistic", 2)),
-    weights                = exp_kernel(rowSums(.d * .a_weights),      p("exp", 1),      p("exp", 2)),
-    corrP                  = exp_kernel(rowSums(.d * .a_corrP),        p("exp", 1),      p("exp", 2)),
-    corrPrel               = exp_kernel(rowSums(.d * .a_corrP_rel),    p("exp", 1),      p("exp", 2))
+    weights                = linear_kernel(rowSums(.d * .a_weights),      p("linear", 1),      p("linear", 2)),
+    weightsrel                = linear_kernel(rowSums(.d * .a_weights_rel),      p("linear", 1),      p("linear", 2)),
+    corrP                  = linear_kernel(rowSums(.d * .a_corrP),        p("linear", 1),      p("linear", 2)),
+    corrPrel               = linear_kernel(rowSums(.d * .a_corrP_rel),    p("linear", 1),      p("linear", 2))
   ) |>
   mutate(across(all_of(pred_cols),
                 ~ pixel_dist - .x,
                 .names = "err_{.col}"))
 
+```
+
+```{r}
+# df_h13_base <- df_h13_base |>
+#   mutate(
+#     d_corrP    = rowSums(.d * .a_corrP),
+#     d_corrP_rel = rowSums(.d * .a_corrP_rel),
+#     d_weights = rowSums(.d * .a_weights),
+#     d_weights_rel = rowSums(.d * .a_weights_rel),
+#     d_uniform = rowSums(.d * .a_uniform),
+#     d_pop_exp = rowSums(.d * .a_pop_exp),
+#     d_pop_log = rowSums(.d * .a_pop_log),
+#     d_pop_linear = rowSums(.d * .a_pop_lin),
+#     d_individ_exp = rowSums(.d * .a_fit_exp),
+#     d_individ_log = rowSums(.d * .a_fit_log),
+#     d_individ_linear = rowSums(.d * .a_fit_lin),
+#   )
+
+# # 2. Fit global linear_kernel params separately for corrP and corrPrel
+# #    (generic NLS via optim -- works regardless of linear_kernel's exact form)
+# fit_global_linear <- function(d, y, start = c(1, 0)) {
+#   obj <- function(par) mean((linear_kernel(d, par[1], par[2]) - y)^2, na.rm = TRUE)
+#   optim(start, obj, method = "BFGS")
+# }
+# fit_global_exp <- function(d, y, start = c(1, 0)) {
+#   obj <- function(par) mean((exp_kernel(d, par[1], par[2]) - y)^2, na.rm = TRUE)
+#   optim(start, obj, method = "BFGS")
+# }
+# fit_global_log <- function(d, y, start = c(1, 0)) {
+#   obj <- function(par) mean((log_kernel(d, par[1], par[2]) - y)^2, na.rm = TRUE)
+#   optim(start, obj, method = "BFGS")
+# }
+
+# fit_weights    <- fit_global_linear(df_h13_base$d_weights,     df_h13_base$pixel_dist)
+# fit_weightsrel <- fit_global_linear(df_h13_base$d_weights_rel, df_h13_base$pixel_dist)
+# fit_corrP    <- fit_global_linear(df_h13_base$d_corrP,     df_h13_base$pixel_dist)
+# fit_corrPrel <- fit_global_linear(df_h13_base$d_corrP_rel, df_h13_base$pixel_dist)
+# fit_uniform_exp <- fit_global_exp(df_h13_base$d_uniform, df_h13_base$pixel_dist)
+# fit_uniform_linear <- fit_global_linear(df_h13_base$d_uniform, df_h13_base$pixel_dist)
+# fit_uniform_log <- fit_global_log(df_h13_base$d_uniform, df_h13_base$pixel_dist)
+# fit_pop_exp <- fit_global_exp(df_h13_base$d_pop_exp, df_h13_base$pixel_dist)
+# fit_pop_linear <- fit_global_linear(df_h13_base$d_pop_linear, df_h13_base$pixel_dist)
+# fit_pop_log <- fit_global_log(df_h13_base$d_pop_log, df_h13_base$pixel_dist)
+# fit_individ_exp <- fit_global_exp(df_h13_base$d_individ_exp, df_h13_base$pixel_dist)
+# fit_individ_linear <- fit_global_linear(df_h13_base$d_individ_linear, df_h13_base$pixel_dist)
+# fit_individ_log <- fit_global_log(df_h13_base$d_individ_log, df_h13_base$pixel_dist)
+
+
+# par_individlog    <- fit_individ_log$par
+# par_individexp    <- fit_individ_exp$par
+# par_individlinear <- fit_individ_linear$par
+# par_poplog    <- fit_pop_log$par
+# par_popexp    <- fit_pop_exp$par
+# par_poplinear <- fit_pop_linear$par
+# par_uniformlog    <- fit_uniform_log$par
+# par_uniformexp    <- fit_uniform_exp$par
+# par_uniformlinear <- fit_uniform_linear$par
+# par_weights    <- fit_weights$par
+# par_weightsrel <- fit_weightsrel$par
+# par_corrP    <- fit_corrP$par
+# par_corrPrel <- fit_corrPrel$par
+
+# # sanity check convergence
+# fit_corrP$convergence    # 0 = converged
+# fit_corrPrel$convergence
+
+# # 3. Use these fitted (not p("linear", ...)) params in the main mutate
+# df_h13 <- df_h13_base |>
+#   mutate(
+#     uniform_exp          = exp_kernel(rowSums(.d * .a_uniform),    par_uniformexp[1], par_uniformexp[2] ),
+#     uniform_linear        = linear_kernel(rowSums(.d * .a_uniform),  par_uniformlinear[1], par_uniformlinear[2]),
+#     uniform_logistic      = log_kernel(rowSums(.d * .a_uniform),   par_uniformlog[1], par_uniformlog[2]),
+#     population_exp        = exp_kernel(rowSums(.d * .a_pop_exp),      par_popexp[1], par_popexp[2]),
+#     population_linear     = linear_kernel(rowSums(.d * .a_pop_lin),   par_poplinear[1], par_poplinear[2]),
+#     population_logistic   = log_kernel(rowSums(.d * .a_pop_log),  par_poplog[1], par_poplog[2]),
+#     fit_exp                = exp_kernel(rowSums(.d * .a_fit_exp),      par_individexp[1], par_individexp[2]),
+#     fit_linear              = linear_kernel(rowSums(.d * .a_fit_lin),  par_individlinear[1], par_individexp[2]),
+#     fit_logistic            = log_kernel(rowSums(.d * .a_fit_log),   par_individlog[1], par_individlog[2]),
+#     weights                = linear_kernel(rowSums(.d * .a_weights),      par_weights[1], par_weights[2]),
+#     weightsrel                = linear_kernel(rowSums(.d * .a_weights_rel),     par_weightsrel[1],    par_weightsrel[2]),
+#     corrP                  = linear_kernel(d_corrP,     par_corrP[1],    par_corrP[2]),
+#     corrPrel               = linear_kernel(d_corrP_rel, par_corrPrel[1], par_corrPrel[2])
+#   ) |>
+#   mutate(across(all_of(pred_cols), ~ pixel_dist - .x, .names = "err_{.col}"))
 ```
 
 #### Step 2: Evaluate predictions
@@ -1250,13 +1339,14 @@ k_lookup <- tribble(
   ~model,            ~k,
   "weights",         0,
   "population_exp",  n_q,
-  "population_lin",  n_q,
+  "population_linear",  n_q,
   "population_logistic",  n_q,
   "uniform_exp",     0,
-  "uniform_lin",     0,
+  "uniform_linear",     0,
+  "uniform_logistic",     0,
   "fit_exp",         (n_q) * n_pw,   
   "fit_linear",      (n_q) * n_pw,
-  "fit_logistic",      (n_q) * n_pw,
+  "fit_logistic",      (n_q) * n_pw ,
   "corrP",            0,
   "corrPrel",         0
 )

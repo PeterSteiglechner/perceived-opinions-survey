@@ -114,7 +114,8 @@ colorsOrig = [
 ]
 
 cmapWave = {1: "#7fc97f", 2: "#beaed4"}
-cmapQuestions = dict(zip(questions_sc, ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#ffff33"]))
+cmapQuestions = dict(zip(questions_sc, ["#4daf4a", "#984ea3", "#ff7f00", "#e41a1c", "#377eb8", "#d4b106"]))
 cmapTreatment = {False: "#386cb0", True: "#f0027f"}
 cmapTreatment[0] = cmapTreatment[False]
 cmapTreatment[1] = cmapTreatment[True]
+cmapTreatment["w1"] = "grey"
