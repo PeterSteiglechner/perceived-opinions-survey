@@ -8,31 +8,17 @@
 import numpy as np
 from numpy.linalg import lstsq, svd
 import pandas as pd
-
+from consts import *
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.optimize import minimize
-from itertools import combinations
 import warnings
 warnings.filterwarnings("ignore")
 
 # %% Configuration
 
-questions_sc = [
-    "climate_concern",
-    "gay_marriage",
-    "rights_indep_integration",
-    "econ_inequality",
-    "regulate_internet",
-    "east_germans"
-]
 delta_cols = [f"deltaX_{q}" for q in questions_sc]
-
 n_issues = len(delta_cols)
-
-parties = ["Left Party", "BSW", "Green Party", "SPD", "FDP", "CDU/CSU", "AfD",
-           "No party", "Other party", "Refuse to say/No answer"]
-partiesVars = ["LeftParty", "BSW", "GreenParty", "SPD", "FDP", "CDU/CSU", "AfD"]
 
 
 # %% # Load Data
@@ -83,26 +69,34 @@ print(f"df_diff unique ids:    {df_diff['id'].nunique()}")
 # %% # Helper functions
 
 def weighted_l1(deltas: np.ndarray, alpha: np.ndarray) -> np.ndarray:
-    """Weighted L1 norm (g_n). deltas: (n_pairs, n_issues), alpha: (n_issues,)"""
+    """returns  sum_q alpha_q * delta_(i,j),q for each pair of individuals i,j """
     return deltas @ alpha
+
+def weighted_l2(deltas: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+    """returns  (sum_q alpha_q * (delta_(i,j),q)^2)^0.5 for each pair of individuals i,j """
+    assert np.all(alpha >= 0)
+    return np.sqrt((deltas ** 2) @ alpha)
 
 
 def linear_kernel(x: np.ndarray, a: float, b: float) -> np.ndarray:
     return a + b * x
 
+def logistic_kernel(x, a, b):
+    """S-curve through (0,0), steepness b, midpoint a"""
+    return 1 / (1 + np.exp(-b * (x - a)))
 
 def exp_kernel(x: np.ndarray, a: float, b: float) -> np.ndarray:
-    """a = reach or scaling (b_n), b = sharpness (c_n)"""
+    """a = reach or scaling, b = sharpness"""
     return 1 - np.exp(-a * (x ** b))
 
 
 def make_loss(deltas: np.ndarray, pixel_dist: np.ndarray,
               kernel: str = "linear", lam: float = 0.0):
     """
-    Returns a loss function (SSE + optional entropy penalty) over params:
-      params[:n_issues]    = alpha (issue weights, should sum to 1)
-      params[n_issues]     = param1 (a: intercept or reach)
-      params[n_issues + 1] = param2 (b: slope or exponent)
+    Returns a loss function (sum squared errors + optional entropy penalty) over parameters:
+      params[:n_issues]    = alpha (issue weights, should sum to 1!)
+      params[n_issues]     = param1 (a: intercept or reach, depending on kernel)
+      params[n_issues + 1] = param2 (b: slope or exponent, depending on kernel)
     """
     def loss(params):
         alpha = params[:n_issues]
@@ -113,12 +107,15 @@ def make_loss(deltas: np.ndarray, pixel_dist: np.ndarray,
 
         if kernel == "linear":
             pred = linear_kernel(g, a, b)
-        else:
+        elif kernel=="logistic":
+            pred = logistic_kernel(g, a, b)
+        elif kernel=="exp":
             pred = exp_kernel(g, a, b)
-
         sse             = np.sum((pixel_dist - pred) ** 2)
-        entropy_penalty = -lam * np.sum(np.log(alpha + 1e-6))
-        return sse + entropy_penalty
+        if lam>0: 
+            entropy_penalty = -lam * np.sum(np.log(alpha + 1e-6))
+            sse += entropy_penalty
+        return sse
 
     return loss
 
@@ -127,18 +124,18 @@ def compute_diagnostics(deltaX: np.ndarray) -> dict:
     """
     Compute VIF per column and condition number of the (scaled) matrix.
     Mirrors the R compute_diagnostics() function.
-    deltaX: nr of participants x nr of issues
+    deltaX: n_pairs x n_issues
     """
 
-    N, M = deltaX.shape
+    n_pairs = deltaX.shape[0]
     vifs = {}
 
     for j, q in enumerate(questions_sc):
         y = deltaX[:, j]
         X = np.delete(deltaX, j, axis=1)
 
-        # R² of regressing column j on all others
-        X_  = np.column_stack([np.ones(N), X])
+        # R2 of regressing column j on all others
+        X_  = np.column_stack([np.ones(n_pairs), X])
         coef, *_ = lstsq(X_, y, rcond=None)
         y_hat = X_ @ coef
         ss_res = np.sum((y - y_hat) ** 2)
@@ -165,19 +162,25 @@ def compute_diagnostics(deltaX: np.ndarray) -> dict:
 
 # %% Fit participant (diagnostics only — mirrors active R code)
 
-def fit_participant(df_p: pd.DataFrame,
+def fit_participant(df_p_id: pd.DataFrame,
                     kernel: str = "linear",
                     n_starts: int = 10,
                     lam: float = 0.0,
-                    verbose: bool = False) -> pd.DataFrame:
-    deltas     = df_p[delta_cols].to_numpy(dtype=float)
-    pixel_dist = df_p["pixel_dist"].to_numpy(dtype=float)
+                    verbose: bool = True) -> pd.DataFrame:
+    deltas     = df_p_id[delta_cols].to_numpy(dtype=float)
+    pixel_dist = df_p_id["pixel_dist"].to_numpy(dtype=float)
     loss       = make_loss(deltas, pixel_dist, kernel=kernel, lam=lam)
-    diag       = compute_diagnostics(deltas)
+    diagnostics       = compute_diagnostics(deltas)
+    # each fit parameter is bounded. alpha in [0,1], the kernel parameters are more loose.
     if kernel == "linear":
-        bounds = [(0, 1)] * n_issues + [(-0.2,1), (0, 2)]
+        # kernel param bounds: intercept: expect 0. slope: expect 0 to 1 (in extreme cases). 
+        bounds = [(0, 1)] * n_issues + [(-0.5,1), (-1, 3)]
+    elif kernel=="logistic":
+        # kernel param bounds: intercept: expect 0. slope: expect 0 to 1 (in extreme cases). 
+        bounds = [(0, 1)] * n_issues + [(-1,2), (-1,50)]
     else:
-        bounds = [(0, 1)] * n_issues + [(0.1, 10), (0, 10)]
+        # kernel param bounds: reach: expect positive number . sharpness: (b>1-->s-shaped). 
+        bounds = [(0, 1)] * n_issues + [(1e-3, 50), (1e-2, 10)]
     constraints = [{"type": "eq", "fun": lambda p: p[:n_issues].sum() - 1}]
 
     all_results = []  # collect one DataFrame per valid start
@@ -189,12 +192,15 @@ def fit_participant(df_p: pd.DataFrame,
             raw    = np.random.rand(n_issues)
             alpha0 = raw / raw.sum()
         if kernel == "linear":
-            p1 = np.random.uniform(0, 0.5)   if i > 0 else 0.0
-            p2 = np.random.uniform(0.0, 2.0) if i > 0 else 1.0
+            a = np.random.uniform(0, 0.5)   if i > 0 else 0.0
+            b = np.random.uniform(0.0, 2.0) if i > 0 else 1.0
+        elif kernel=="logistic":
+            a = np.random.uniform(-1,2)   if i > 0 else 0.5
+            b = np.random.uniform(0, 10) if i > 0 else 2
         else:
-            p1 = np.random.uniform(0, 2)  if i > 0 else 1.0
-            p2 = np.random.uniform(0.5, 3) if i > 0 else 1.0
-        x0 = np.concatenate([alpha0, [p1, p2]])
+            a = np.random.uniform(0, 2)  if i > 0 else 1.0
+            b = np.random.uniform(0.5, 3) if i > 0 else 1.0
+        x0 = np.concatenate([alpha0, [a,b]])
 
         try:
             fit = minimize(
@@ -213,8 +219,8 @@ def fit_participant(df_p: pd.DataFrame,
                 df_start = pd.DataFrame({
                     "issue":            delta_cols,
                     "alpha":            params[:n_issues],
-                    "vif":              [diag["vif"][c] for c in delta_cols],
-                    "condition_number": diag["condition_number"],
+                    "vif":              [diagnostics["vif"][c] for c in delta_cols],
+                    "condition_number": diagnostics["condition_number"],
                     "kernel":           kernel,
                     "converged":        fit.success,
                     "sse":              fit.fun,
@@ -242,8 +248,8 @@ def fit_participant(df_p: pd.DataFrame,
         df_fallback = pd.DataFrame({
             "issue":            delta_cols,
             "alpha":            params[:n_issues],
-            "vif":              [diag["vif"][c] for c in delta_cols],
-            "condition_number": diag["condition_number"],
+            "vif":              [diagnostics["vif"][c] for c in delta_cols],
+            "condition_number": diagnostics["condition_number"],
             "kernel":           kernel,
             "converged":        False,
             "sse":              loss(params),
@@ -266,175 +272,161 @@ print("function fit_participant check")
 
 # %% Run for all participants × both kernels
 
-np.random.seed(1)
+# ----------------------------------------------------------
+# ----   Fit on all available pairwise distances or just the pairs involving self and parties
+# ----------------------------------------------------------
 
-records = []
-for (pid, wave), participant_data in df_diff.groupby(["id", "wave"]):
-    for kernel in ["linear", "exp"]:
-        participant_party_data = participant_data.query(f"(dot1 in ['self'] or dot1 in {partiesVars}) and dot2 in {partiesVars}")
-        res = fit_participant(participant_party_data, kernel=kernel, lam=0.0, n_starts=10)
-        res["id"]   = pid
-        res["wave"] = wave
-        records.append(res)
-    if pid in np.arange(0, 2000, 200):
-        print(f"({pid}, {wave})", end=", ") 
+np.random.seed(42)
+vif_results = []
+for mode in ["fitAllDots", "fitPartyDots"]:
+    print(mode)
+    if mode == "fitAllDots": 
+        query = "index==index"
+    elif mode == "fitPartyDots": 
+        query = f"(dot1 in ['self'] or dot1 in {partiesVars}) and dot2 in {partiesVars}"
+    
+    records = []
+    counter= 0
+    for (pid, wave), participant_data in df_diff.groupby(["id", "wave"]):
+        for kernel in ["linear", "logistic", "exp"]:
+            participant_data = participant_data.query(query)
+            res = fit_participant(participant_data, kernel=kernel, lam=0.0, n_starts=3)
+            res["id"]   = pid
+            res["wave"] = wave
+            records.append(res)
+        counter+=1
+        if wave==1 and pid in df_p["id"].unique()[::50]:
+            print(f"{counter}", end=", ") 
 
-results = pd.concat(records, ignore_index=True)
-print("... fitting done.")
+    results = pd.concat(records, ignore_index=True)
+    print("... fitting done.")
+    results["fittingMode"] = mode 
+    
+    # store results
+    vif_results.append(results)#to_csv(f"processed_data/fits_allweights_vif_10starts.csv")
 
-
-#%%
-# np.random.seed(2)
-
-# records = []
-# for (pid, wave), group in df_diff.groupby(["id", "wave"]):
-#     for kernel in ["linear", "exp"]:
-#         res = fit_participant(group, kernel=kernel, lam=0.0, n_starts=10)
-#         res["id"]   = pid
-#         res["wave"] = wave
-#         records.append(res)
-
-# results = pd.concat(records, ignore_index=True)
-# print("... fitting done.")
-
-#%%
-# store results
-results.to_csv("processed_data/fits_allweights_vif_10starts_justParties.csv")
-#%%
-# results = pd.read_csv("processed_data/fits_allweights_vif_50starts.csv")
-# %% Analyse VIF
-
-vif_summary = (
-    results.loc[results.is_best]
-    .groupby(["id", "wave"])
-    .agg(
-        max_vif  =("vif", "max"),
-        mean_vif =("vif", "mean"),
-        any_high =("vif", lambda x: (x > 10).any())
+    # Analyse VIF
+    vif_summary = (
+        results.loc[results.is_best]
+        .groupby(["id", "wave", "fittingMode"])
+        .agg(
+            max_vif  =("vif", "max"),
+            mean_vif =("vif", "mean"),
+            any_high =("vif", lambda x: (x > 10).any())
+        )
+        .reset_index()
     )
-    .reset_index()
-)
 
+    valid_ids = vif_summary.loc[vif_summary.max_vif<10, ["wave", "id", "fittingMode"]]
+    valid_ids["valid"] = True
+    print(vif_summary.head())
+    resultsV = results.merge(valid_ids, on=["wave", "id", "fittingMode"], how="left")
+    (vif_summary.max_vif<10).value_counts()
 
-valid_ids = vif_summary.loc[vif_summary.max_vif<10, ["wave", "id"]]
-valid_ids["valid"] = True
-print(vif_summary.head())
-resultsV = results.merge(valid_ids, on=["wave", "id"], how="left")
-(vif_summary.max_vif<10).value_counts()
+    # VISUALISE VIFs
+    # sns.boxplot(resultsV.loc[resultsV.valid & resultsV.is_best], x="issue", y="alpha", hue="wave", palette="Set1", fliersize=0, saturation=1)
+    # # sns.barplot(resultsV.loc[resultsV.is_best & resultsV.valid ], x="issue", y="alpha", hue="wave", alpha=0.1, palette="Set1")
+    # sns.stripplot(resultsV.loc[resultsV.valid & resultsV.is_best], x="issue", y="alpha", hue="wave", marker="o", size=1, dodge=True, palette="Set1", edgecolor="w", linewidth=0.05)
+    # sns.stripplot(resultsV.loc[resultsV.valid & resultsV.is_best].groupby("issue")["alpha"].mean().reset_index(), x="issue", y="alpha", marker="s", size=10, palette="Set1")
+    # plt.ylim(-0.02, 0.4)
+    # resultsV.loc[resultsV.valid & resultsV.is_best].groupby("issue")["alpha"].mean()
 
-
-#%%
-sns.boxplot(resultsV.loc[resultsV.valid & resultsV.is_best], x="issue", y="alpha", hue="wave", palette="Set1", fliersize=0, saturation=1)
-# sns.barplot(resultsV.loc[resultsV.is_best & resultsV.valid ], x="issue", y="alpha", hue="wave", alpha=0.1, palette="Set1")
-sns.stripplot(resultsV.loc[resultsV.valid & resultsV.is_best], x="issue", y="alpha", hue="wave", marker="o", size=1, dodge=True, palette="Set1", edgecolor="w", linewidth=0.05)
-sns.stripplot(resultsV.loc[resultsV.valid & resultsV.is_best].groupby("issue")["alpha"].mean().reset_index(), x="issue", y="alpha", marker="s", size=10, palette="Set1")
-
-plt.ylim(-0.02, 0.4)
-resultsV.loc[resultsV.valid & resultsV.is_best].groupby("issue")["alpha"].mean()
-
-# %% Collect alphas — wide format (one row per participant × kernel)
-
-
-alphas_wide = (
-    results.loc[results.is_best]
-    .pivot_table(index=["id", "wave", "kernel"], columns="issue", values="alpha")
-    .reset_index()
-)
-alphas_wide.columns.name = None
-alphas_wide.columns = [
-    c if c in ["id", "wave", "kernel"] else f"alpha_{c}"
-    for c in alphas_wide.columns
-]
-
-# Convergence summary
-print(results.loc[results.is_best].groupby(["kernel", "converged"]).size().unstack(fill_value=0))
-
-
-# %% Attach alphas to dataframes
-# (also requires the optimisation block to be active)
-
-alphas_join = (
-    alphas_wide
-    .merge(
-        results.loc[results.is_best][["id", "wave", "kernel", "sse", "converged",
-                 "param1", "param2"]].drop_duplicates(),
-        on=["id", "wave", "kernel"]
+    # Collect alphas — wide format (one row per participant × kernel)
+    alphas_wide = (
+        results.loc[results.is_best]
+        .pivot_table(index=["id", "wave", "kernel", "fittingMode"], columns="issue", values="alpha")
+        .reset_index()
     )
-)
+    alphas_wide.columns.name = None
+    alphas_wide.columns = [
+        c if c in ["id", "wave", "kernel", "fittingMode"] else f"alpha_{mode}_{c}"
+        for c in alphas_wide.columns
+    ]
 
-# Pivot kernels wide
-alphas_join = alphas_join.pivot_table(
-    index=["id", "wave"],
-    columns="kernel",
-    values=[c for c in alphas_join.columns if c not in ["id", "wave", "kernel"]],
-    aggfunc="first"
-).reset_index()
-alphas_join.columns = [
-    f"{b}_{a}" if b else a
-    for a, b in alphas_join.columns
-]
-alphas_join.columns = alphas_join.columns.str.replace("alpha_deltaX_", "alpha_")
-
-# Pick best kernel per participant × wave
-alphas_join["best_kernel"] = np.where(
-    alphas_join["linear_sse"] < alphas_join["exp_sse"],
-    "linear", "exp"
-)
-
-# Join back
-df_diff_with_alphas   = df_diff.merge(alphas_join,   on=["id", "wave"], how="left")
-df_partic_with_alphas = df_partic.merge(alphas_join, on=["id", "wave"], how="left")
+    # Convergence summary
+    print(results.loc[results.is_best].groupby(["kernel", "converged"]).size().unstack(fill_value=0))
 
 
+    # Attach alphas to dataframes
+    alphas_join = (
+        alphas_wide
+        .merge(
+            results.loc[results.is_best][["id", "wave", "kernel", "fittingMode", "sse", "converged",
+                    "param1", "param2"]].rename(columns={"param1":f"{mode}_param1", "param2":f"{mode}_param2"}).drop_duplicates(),
+            on=["id", "wave", "kernel", "fittingMode"]
+        )
+    )
+
+    # Pivot kernels wide
+    alphas_join = alphas_join.pivot_table(
+        index=["id", "wave"],
+        columns="kernel",
+        values=[c for c in alphas_join.columns if c not in ["id", "wave", "kernel", "fittingMode"]],
+        aggfunc="first"
+    ).reset_index()
+    alphas_join.columns = [
+        f"{b}_{a}" if b else a
+        for a, b in alphas_join.columns
+    ]
+    alphas_join.columns = alphas_join.columns.str.replace("alpha_deltaX_", "alpha_")
+    alphas_join.columns = alphas_join.columns.str.replace(f"alpha_{mode}_deltaX_", f"alpha_{mode}")
+    
+
+    # Pick best kernel per participant × wave
+
+    sse_cols = {"linear": f"linear_{mode}_sse", "exp": f"exp_{mode}_sse", "logistic": f"logistic_{mode}_sse"}
+    alphas_join = alphas_join.rename(columns={c+"_sse":cm for c, cm in sse_cols.items()})
+    best = alphas_join[list(sse_cols.values())].idxmin(axis=1)
+    alphas_join[f"best_kernel_{mode}"] = best.map({v: k for k, v in sse_cols.items()})
+    # Join back
+    df_diff   = df_diff.merge(alphas_join,   on=["id", "wave"], how="left")
+    df_partic = df_partic.merge(alphas_join, on=["id", "wave"], how="left")
+
+
+    # ------------  Correlations Map distance -- Opinion Differences
+    corrS_by_group = (
+        df_diff
+        .query(query)    
+        .groupby(["id", "wave"])
+        [[f"pixel_dist"] + [f"deltaX_{q}" for q in questions_sc]]
+        .apply(lambda g: g.corr(method='spearman')["pixel_dist"][[f"deltaX_{q}" for q in questions_sc]])
+        .reset_index()
+        .rename(columns={f"deltaX_{q}": f"corrS_alpha_{mode}_{q}" for q in questions_sc})
+    )
+
+    df_diff = df_diff.merge(corrS_by_group, on=["id", "wave"], how="left")#.copy()
+    df_diff[f"sumCorrSAlpha_{mode}"] = df_diff[[f"corrS_alpha_{mode}_{q}" for q in questions_sc]].sum(axis=1)
+
+    corrP_by_group = (
+        df_diff
+        .query(query)
+        .groupby(["id", "wave"])
+        [[f"pixel_dist"] + [f"deltaX_{q}" for q in questions_sc]]
+        .apply(lambda g: g.corr(method='pearson')["pixel_dist"][[f"deltaX_{q}" for q in questions_sc]])
+        .reset_index()
+        .rename(columns={f"deltaX_{q}": f"corrP_alpha_{mode}_{q}" for q in questions_sc})
+    )
+    df_diff = df_diff.merge(corrP_by_group, on=["id", "wave"], how="left").copy()
+    df_diff[f"sumCorrPAlpha_{mode}"] = df_diff[[f"corrP_alpha_{mode}_{q}" for q in questions_sc]].sum(axis=1)
+
+    df_partic = df_partic.merge(corrS_by_group, on=["id", "wave"], how="left")
+    df_partic[f"sumCorrSAlpha_{mode}"] = df_partic[[f"corrS_alpha_{mode}_{q}" for q in questions_sc]].sum(axis=1).copy()
+    df_partic = df_partic.merge(corrP_by_group, on=["id", "wave"], how="left")
+    df_partic[f"sumCorrPAlpha_{mode}"] = df_partic[[f"corrP_alpha_{mode}_{q}" for q in questions_sc]].sum(axis=1).copy()
+
+
+    vif_qs = results.loc[(results.kernel=="linear") & (results.is_best)].pivot_table(columns="issue", index=["id", "wave"], values="vif").rename(columns=dict(zip(delta_cols,[f"vif_{mode}_{q}" for q in questions_sc]))).reset_index()
+    cond_qs = results.loc[(results.kernel=="linear") & (results.is_best)].pivot_table(columns="issue", index=["id", "wave"], values="condition_number").rename(columns=dict(zip(delta_cols,[f"condNr_{mode}_{q}" for q in questions_sc]))).reset_index()
+    df_partic = df_partic.merge(vif_qs, on = ["id", "wave"])
+    df_partic = df_partic.merge(cond_qs, on = ["id", "wave"])
+
+print("everything done... continue to save")
 #%%
-
-
-
-corrS_by_group = (
-    df_diff
-    .query(f"(dot1 in ['self'] or dot1 in {partiesVars}) and dot2 in {partiesVars}")    
-    .groupby(["id", "wave"])
-    [[f"pixel_dist"] + [f"deltaX_{q}" for q in questions_sc]]
-    .apply(lambda g: g.corr(method='spearman')["pixel_dist"][[f"deltaX_{q}" for q in questions_sc]])
-    .reset_index()
-    .rename(columns={f"deltaX_{q}": f"corrS_alpha_{q}" for q in questions_sc})
-)
-
-df_diff2 = df_diff_with_alphas.merge(corrS_by_group, on=["id", "wave"], how="left").copy()
-df_diff2["sumCorrSAlpha"] = df_diff2[[f"corrS_alpha_{q}" for q in questions_sc]].sum(axis=1)
-
-corrP_by_group = (
-    df_diff
-    .query(f"(dot1 in ['self'] or dot1 in {partiesVars}) and dot2 in {partiesVars}")
-    .groupby(["id", "wave"])
-    [[f"pixel_dist"] + [f"deltaX_{q}" for q in questions_sc]]
-    .apply(lambda g: g.corr(method='pearson')["pixel_dist"][[f"deltaX_{q}" for q in questions_sc]])
-    .reset_index()
-    .rename(columns={f"deltaX_{q}": f"corrP_alpha_{q}" for q in questions_sc})
-)
-
-df_diff2 = df_diff2.merge(corrP_by_group, on=["id", "wave"], how="left").copy()
-df_diff2["sumCorrPAlpha"] = df_diff2[[f"corrP_alpha_{q}" for q in questions_sc]].sum(axis=1)
-
-# %%
-df_p2 = df_partic_with_alphas.merge(corrS_by_group, on=["id", "wave"], how="left")
-df_p2["sumCorrSAlpha"] = df_p2[[f"corrS_alpha_{q}" for q in questions_sc]].sum(axis=1).copy()
-df_p2 = df_p2.merge(corrP_by_group, on=["id", "wave"], how="left")
-df_p2["sumCorrPAlpha"] = df_p2[[f"corrP_alpha_{q}" for q in questions_sc]].sum(axis=1).copy()
-
-
-vif_qs = results.loc[(results.kernel=="linear") & (results.is_best)].pivot_table(columns="issue", index=["id", "wave"], values="vif").rename(columns=dict(zip(delta_cols,[f"vif_{q}" for q in questions_sc]))).reset_index()
-cond_qs = results.loc[(results.kernel=="linear") & (results.is_best)].pivot_table(columns="issue", index=["id", "wave"], values="condition_number").rename(columns=dict(zip(delta_cols,[f"condNr_{q}" for q in questions_sc]))).reset_index()
-df_p3 = df_p2.merge(vif_qs, on = ["id", "wave"])
-df_p3 = df_p3.merge(cond_qs, on = ["id", "wave"])
-
-
-#%%
-df_p3.to_csv(
-    "processed_data/2026-06-19_data_processed_participant_withAllIssueWeights_justParties.csv",
+df_partic.to_csv(
+    "processed_data/2026-07-07_data_processed_participant_withAllIssueWeights.csv",
     index=False)
-df_diff2.to_csv(
-    "processed_data/2026-06-19_data_processed_differences_withAllIssueWeights_justParties.csv",
+df_diff.to_csv(
+    "processed_data/2026-07-07_data_processed_differences_withAllIssueWeights.csv",
     index=False)
 
 
@@ -479,109 +471,109 @@ df_diff2.to_csv(
 # %% # Predict distances
 # (requires optimisation to be active; function shown for completeness)
 
-def predict_distances(df_p: pd.DataFrame, fit_row: pd.Series) -> pd.DataFrame:
-    alpha_cols = [c for c in fit_row.index if c.startswith("alpha_")]
-    alpha      = fit_row[alpha_cols].to_numpy(dtype=float)
-    deltas     = df_p[delta_cols].to_numpy(dtype=float)
-    g          = deltas @ alpha
+# def predict_distances(df_p: pd.DataFrame, fit_row: pd.Series) -> pd.DataFrame:
+#     alpha_cols = [c for c in fit_row.index if c.startswith("alpha_")]
+#     alpha      = fit_row[alpha_cols].to_numpy(dtype=float)
+#     deltas     = df_p[delta_cols].to_numpy(dtype=float)
+#     g          = deltas @ alpha
 
-    if fit_row["kernel"] == "linear":
-        pred = fit_row["param1"] + fit_row["param2"] * g
-    else:
-        pred = 1 - np.exp(-fit_row["param1"] * (g ** fit_row["param2"]))
+#     if fit_row["kernel"] == "linear":
+#         pred = fit_row["param1"] + fit_row["param2"] * g
+#     else:
+#         pred = 1 - np.exp(-fit_row["param1"] * (g ** fit_row["param2"]))
 
-    return pd.DataFrame({"observed": df_p["pixel_dist"].values, "predicted": pred})
+#     return pd.DataFrame({"observed": df_p["pixel_dist"].values, "predicted": pred})
 
 
-# participant = "330717073703941"
-# wave        = 2
-# kernel      = "linear"
-#
-# one_fit = alphas_wide.query(
-#     "kernel == @kernel and id == @participant and wave == @wave"
-# ).iloc[0]
-#
-# one_df  = df_diff.query("id == @participant and wave == @wave")
-# pred_df = predict_distances(one_df, one_fit)
-#
-# fig, ax = plt.subplots()
-# ax.scatter(pred_df["observed"], pred_df["predicted"], alpha=0.6)
-# ax.axline((0, 0), slope=1, color="red", linestyle="--")
-# ax.set_aspect("equal")
-# ax.set_xlabel("Observed pixel distance")
-# ax.set_ylabel(f"Predicted distance ({kernel} kernel)")
-# ax.set_title(f"Observed vs predicted\n(id {participant}, wave {wave}, {kernel})")
+# # participant = "330717073703941"
+# # wave        = 2
+# # kernel      = "linear"
+# #
+# # one_fit = alphas_wide.query(
+# #     "kernel == @kernel and id == @participant and wave == @wave"
+# # ).iloc[0]
+# #
+# # one_df  = df_diff.query("id == @participant and wave == @wave")
+# # pred_df = predict_distances(one_df, one_fit)
+# #
+# # fig, ax = plt.subplots()
+# # ax.scatter(pred_df["observed"], pred_df["predicted"], alpha=0.6)
+# # ax.axline((0, 0), slope=1, color="red", linestyle="--")
+# # ax.set_aspect("equal")
+# # ax.set_xlabel("Observed pixel distance")
+# # ax.set_ylabel(f"Predicted distance ({kernel} kernel)")
+# # ax.set_title(f"Observed vs predicted\n(id {participant}, wave {wave}, {kernel})")
+# # plt.tight_layout()
+# # plt.show()
+
+
+# # %% # Analyse initial-condition dependence of weights
+# examples = results.loc[results.vif<5, ["id", "wave", "param1_name"]].sample(10)
+# x = np.linspace(0,1)
+# id, wave, kernel = (331246904848564, 1, "linearKernel_param1") #examples.iloc[0]
+# kernel2 = ("expKernel_param1" if "linear" in kernel else "linearKernel_param1") 
+# example = results.loc[(results["id"]==id) & (results["wave"]==wave) & (results["param1_name"] == kernel)]
+# for i in range(50):
+#     a,b = example.loc[example.i_start==i, ["param1", "param2"]].iloc[0]
+#     print(a,b)
+#     plt.plot(x, linear_kernel(x, a,b) if "linear" in kernel else exp_kernel(x, a, b))
+
+
+# exampleFull = results.loc[(results["id"]==id) & (results["wave"]==wave) & (results["param1_name"].isin([kernel, kernel2]))]
+
+# fig = plt.figure()
+# ax = fig.axes()
+# sns.barplot(exampleFull, x="issue", y="alpha", hue="kernel")
+# sns.swarmplot(exampleFull, x="issue", y="alpha", size=3, hue="kernel", aax=ax)
+# fig.autofmt_xdate()
+
+# plt.autofmt_xdate()
+
+
+# # %%
+# # Pick a few participants
+# sample_ids = df_diff["id"].unique()[:5]
+
+# fig, axes = plt.subplots(len(sample_ids), 2, figsize=(10, 3 * len(sample_ids)))
+
+# for i, pid in enumerate(sample_ids):
+#     for j, wave in enumerate([1, 2]):
+#         ax = axes[i, j]
+#         grp = df_diff.loc[(df_diff["id"] == pid) & (df_diff["wave"] == wave)]
+#         if grp.empty:
+#             ax.set_visible(False)
+#             continue
+
+#         deltas     = grp[delta_cols].to_numpy(dtype=float)
+#         pixel_dist = grp["pixel_dist"].to_numpy(dtype=float)
+
+#         fitted_row = results.loc[
+#             (results["id"] == pid) & (results["wave"] == wave) &
+#             (results["kernel"] == "exp") & results["is_best"]
+#         ]
+#         if fitted_row.empty:
+#             ax.set_visible(False)
+#             continue
+
+#         alpha_fit  = fitted_row.set_index("issue")["alpha"].reindex(delta_cols).to_numpy()
+#         p1         = fitted_row["param1"].iloc[0]
+#         p2         = fitted_row["param2"].iloc[0]
+
+#         # Equal weights baseline
+#         equal_alpha = np.full(n_issues, 1 / n_issues)
+#         pred_equal  = exp_kernel(weighted_l1(deltas, equal_alpha), p1, p2)
+#         pred_fit    = exp_kernel(weighted_l1(deltas, alpha_fit),   p1, p2)
+
+#         ax.scatter(pred_equal, pixel_dist, label="equal α",  alpha=0.6, s=20)
+#         ax.scatter(pred_fit,   pixel_dist, label="fitted α", alpha=0.6, s=20, marker="x")
+#         ax.plot([0,1],[0,1], "k--", lw=1)  # identity line
+
+#         ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+#         ax.set_xlabel("predicted pixel_dist")
+#         ax.set_ylabel("actual pixel_dist")
+#         ax.set_title(f"id={pid}, wave={wave}")
+#         ax.legend(fontsize=7)
+
 # plt.tight_layout()
 # plt.show()
-
-
-# %% # Analyse initial-condition dependence of weights
-examples = results.loc[results.vif<5, ["id", "wave", "param1_name"]].sample(10)
-x = np.linspace(0,1)
-id, wave, kernel = (331246904848564, 1, "linearKernel_param1") #examples.iloc[0]
-kernel2 = ("expKernel_param1" if "linear" in kernel else "linearKernel_param1") 
-example = results.loc[(results["id"]==id) & (results["wave"]==wave) & (results["param1_name"] == kernel)]
-for i in range(50):
-    a,b = example.loc[example.i_start==i, ["param1", "param2"]].iloc[0]
-    print(a,b)
-    plt.plot(x, linear_kernel(x, a,b) if "linear" in kernel else exp_kernel(x, a, b))
-
-
-exampleFull = results.loc[(results["id"]==id) & (results["wave"]==wave) & (results["param1_name"].isin([kernel, kernel2]))]
-
-fig = plt.figure()
-ax = fig.axes()
-sns.barplot(exampleFull, x="issue", y="alpha", hue="kernel")
-sns.swarmplot(exampleFull, x="issue", y="alpha", size=3, hue="kernel", aax=ax)
-fig.autofmt_xdate()
-
-plt.autofmt_xdate()
-
-
-# %%
-# Pick a few participants
-sample_ids = df_diff["id"].unique()[:5]
-
-fig, axes = plt.subplots(len(sample_ids), 2, figsize=(10, 3 * len(sample_ids)))
-
-for i, pid in enumerate(sample_ids):
-    for j, wave in enumerate([1, 2]):
-        ax = axes[i, j]
-        grp = df_diff.loc[(df_diff["id"] == pid) & (df_diff["wave"] == wave)]
-        if grp.empty:
-            ax.set_visible(False)
-            continue
-
-        deltas     = grp[delta_cols].to_numpy(dtype=float)
-        pixel_dist = grp["pixel_dist"].to_numpy(dtype=float)
-
-        fitted_row = results.loc[
-            (results["id"] == pid) & (results["wave"] == wave) &
-            (results["kernel"] == "exp") & results["is_best"]
-        ]
-        if fitted_row.empty:
-            ax.set_visible(False)
-            continue
-
-        alpha_fit  = fitted_row.set_index("issue")["alpha"].reindex(delta_cols).to_numpy()
-        p1         = fitted_row["param1"].iloc[0]
-        p2         = fitted_row["param2"].iloc[0]
-
-        # Equal weights baseline
-        equal_alpha = np.full(n_issues, 1 / n_issues)
-        pred_equal  = exp_kernel(weighted_l1(deltas, equal_alpha), p1, p2)
-        pred_fit    = exp_kernel(weighted_l1(deltas, alpha_fit),   p1, p2)
-
-        ax.scatter(pred_equal, pixel_dist, label="equal α",  alpha=0.6, s=20)
-        ax.scatter(pred_fit,   pixel_dist, label="fitted α", alpha=0.6, s=20, marker="x")
-        ax.plot([0,1],[0,1], "k--", lw=1)  # identity line
-
-        ax.set_xlim(0, 1); ax.set_ylim(0, 1)
-        ax.set_xlabel("predicted pixel_dist")
-        ax.set_ylabel("actual pixel_dist")
-        ax.set_title(f"id={pid}, wave={wave}")
-        ax.legend(fontsize=7)
-
-plt.tight_layout()
-plt.show()
-# %%
+# # %%

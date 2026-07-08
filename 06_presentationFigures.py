@@ -54,14 +54,15 @@ for ax, col, label in zip(axes, op_cols, questions_sc):
         color="cornflowerblue",
         alpha=0.5,
     )
-    ax.set_title(label)
+    ax.set_title(labelMap[label])
     ax.set_xlim(-1, 1) 
     ax.set_yticks([])
     ax.set_ylabel("")
     ax.set_xlabel("")
     ax.tick_params(axis="x")
 
-fig.tight_layout(pad=0.6)
+axes[-2].set_xlabel("own opinions")
+fig.tight_layout()
 plt.savefig("figs/ownOps.png")
 # %%
 fig, axs = plt.subplots(2, 3, figsize=(8, 3.5), sharey=False, sharex=True)
@@ -81,7 +82,7 @@ for ax, q in zip(axes, questions_sc):
         legend=False,   # suppress all in-plot legends
     )
 
-    ax.set_title(q)
+    ax.set_title(labelMap[q])
     ax.set_xlim(-1, 1)
     ax.set_yticks([])
     ax.set_ylabel("")
@@ -105,7 +106,7 @@ fig.subplots_adjust(right=0.82)  # make room for the legend
 plt.savefig("figs/partyOps.png")
 #%%
 ops = df_p.melt(id_vars=["id", "wave"], value_vars=[f"x_self_{q}" for q in questions_sc], value_name="opinion", var_name="question").replace(dict(zip([f"x_self_{q}" for q in questions_sc], questions_sc)))
-stds = df_p.melt(id_vars=["id", "wave"], value_vars=[f"std_socialCircle_ops_{q}" for q in questions_sc], value_name="std social circle opinions", var_name="question").replace(dict(zip([f"std_socialCircle_ops_{q}" for q in questions_sc], questions_sc)))
+stds = df_p.melt(id_vars=["id", "wave"], value_vars=[f"std_socialCircle_ops_{q}" for q in questions_sc], value_name="std opinions in social circle", var_name="question").replace(dict(zip([f"std_socialCircle_ops_{q}" for q in questions_sc], questions_sc)))
 ops_std = ops.merge(stds, on=["id", "wave", "question"])
 ops_std["|opinion|"] = abs(ops_std["opinion"])
 
@@ -118,7 +119,7 @@ def p_to_stars(p):
 
 g = sns.lmplot(
     ops_std,
-    y="std social circle opinions",
+    y="std opinions in social circle",
     x="|opinion|",
     hue="question",
     height=3.5,
@@ -135,10 +136,10 @@ palette = sns.color_palette(n_colors=len(questions_sc))
 slopes, stars_list = [], []
 for question in questions_sc:
     subset = ops_std[ops_std["question"] == question].dropna(
-        subset=["std social circle opinions", "|opinion|"]
+        subset=["std opinions in social circle", "|opinion|"]
     )
     slope, _, _, p, _ = stats.linregress(
-        subset["std social circle opinions"],
+        subset["std opinions in social circle"],
         subset["|opinion|"]
     )
     slopes.append(slope)
@@ -181,7 +182,7 @@ for ax, col, q in zip(axes, stdSC_cols, questions_sc):
         # color="orange",
         hue="treatment_wave2_str",
         palette={"T":"magenta", "C":"brown", "w1":"orange"},
-        alpha=0.3,
+        alpha=0.5,
         legend=False
     )
     mean_T = df_p.query(wavecondition+" and treatment_wave2_str=='T'")[col].dropna().mean()
@@ -191,23 +192,24 @@ for ax, col, q in zip(axes, stdSC_cols, questions_sc):
         ax.vlines(
             meanval,
             0,1.8,
-            color=col,
+            color=col if "2" in wavecondition else "darkorange",
             linestyles="--"
         )
         s = '{SD}'
-        ax.text(meanval-0.05, 2.5, rf"   $\overline{s}_{label}$:"+f" {meanval:.2f}", ha='left', va='top', color=col)
+        add = ""#f"_{label}"
+        ax.text(meanval-0.05, 2.5, rf"   $\overline{s}{add}$:"+f" {meanval:.2f}", ha='left', va='top', color=col)
     
 
-    ax.set_title(q)
+    ax.set_title(labelMap[q])
     ax.set_xlim(0, 1.) 
     ax.set_yticks([])
     ax.set_ylabel("")
     ax.set_xlabel("")
     ax.tick_params(axis="x")
     # ax.text( df_p.query(wavecondition)[col].dropna().mean(), 2.8, f" mean: {df_p.query(wavecondition)[col].dropna().mean():.2f}", ha='left', va='top')
-
-fig.suptitle("social circle std")
-fig.tight_layout(pad=0.6)
+axes[-2].set_xlabel("std opinions social circle")
+print("social circle std")
+fig.tight_layout()
 plt.savefig("figs/socialvarOps.png")
 # %%
 # 7. VIF and Correlation Number
@@ -222,21 +224,41 @@ for ax, col in zip(axes, ["pairwise_similarity", "pixel_dist"]):
     sns.histplot(df_diff.query(wavecondition)[col], color="purple" if "sim" in col else "steelblue", bins=11, binrange=[-0.01,1.01], ax=ax, kde=True, linewidth=3, alpha=0.3)
     ax.set_yticks([])
     ax.set_ylabel(r"# responses" if "sim" in col else "")
-    ax.set_xlabel("pairwise similarity" if "sim" in col else "map distance")
+    ax.set_xlabel("similarity rating" if "sim" in col else "map distance")
+
+df_diff_random = []
+for k, row in df_p.query(wavecondition).iterrows():
+    listpeeps = list(range(row.n_contacts))
+    randpos = np.random.random((2,len(listpeeps)))
+    diffs = [np.linalg.norm(randpos[:,i] - randpos[:,j])/np.sqrt(2) for i, j in combinations(listpeeps, 2)]
+    df_diff_random.extend(diffs)
+ax2 = ax.twinx()
+sns.kdeplot(pd.Series(df_diff_random), ax=ax2, zorder=-1,  color="darkgrey", linestyle="--")
+ax2.axis("off")
 plt.tight_layout()
-plt.savefig("figs/dists_pairwise_mapDist.png", dpi=600)
+
+fig, axes = plt.subplots(1,2, figsize=(5, 2.), sharey=False, sharex=True)
+df_diff["pairwise_dissimilarity"] = 1- df_diff["pairwise_similarity"] 
+for ax, col in zip(axes, ["pairwise_dissimilarity", "pixel_dist"]):
+    sns.histplot(df_diff.query(wavecondition)[col], color="purple" if "sim" in col else "steelblue", bins=11, binrange=[-0.01,1.01], ax=ax, kde=True, linewidth=3, alpha=0.3)
+    ax.set_yticks([])
+    ax.set_ylabel(r"# responses" if "sim" in col else "")
+    ax.set_xlabel("dissimilarity rating" if "sim" in col else "map distance")
+plt.tight_layout()
+plt.savefig("figs/dists_pairwiseDissim_mapDist.png", dpi=600)
 # %%
 # 10. Party -- Self
 
 fig, axes = plt.subplots(1,3, figsize=(7, 2.), sharey=False, sharex=True)
-for ax, col in zip(axes, ["pairwise_similarity", "pixel_dist", "sympathy"]):
+df_diff["dislike"] = 1- df_diff["sympathy"]
+for ax, col in zip(axes, ["pixel_dist", "pairwise_dissimilarity", "dislike"]):
     sns.histplot(df_diff.query(f"wave==2 and dot1=='self' and dot2 in {partiesVars}")[col], color="purple" if "sim" in col else ("steelblue" if "pix" in col else "tomato"), bins=11, binrange=[-0.01,1.01], ax=ax, kde=True, linewidth=3, alpha=0.3)
     ax.set_yticks([])
-    ax.set_ylabel("responses" if "sim" in col else "")
-    ax.set_xlabel("pairwise similarity" if "sim" in col else ("map distance" if "pix" in col else "likability"))
-axes[-1].set_title("only 'self' vs. voter evaluations", y=1.0, x=0.96, va="bottom", ha="right")
+    ax.set_ylabel("responses" if "pixe" in col else "")
+    ax.set_xlabel("dissimilarity rating" if "sim" in col else ("map distance" if "pix" in col else "dislikability rating"))
+axes[-1].set_title("only 'self' vs. typical voter evaluations", y=1.0, x=0.96, va="bottom", ha="right")
 plt.tight_layout()
-plt.savefig("figs/dists_pairwise_mapDist_sym.png", dpi=600)
+plt.savefig("figs/dists_pairwiseDissim_mapDist_nonsym.png", dpi=600)
 # %%
 # 11. Correlations
 wavecondition = "wave in [1,2]"
@@ -270,7 +292,7 @@ for ax, col, q in zip(axes, corr_cols, questions_sc):
         )
         s = r'{r_{d,\Delta X}}'
         ax.text(meanval, ax.get_ylim()[1]*y, rf"   $\overline{s}({label})$:"+f" {meanval:.2f}", ha='left', va='top', color=col)
-    ax.set_title(q)
+    ax.set_title(labelMap[q])
     ax.set_xlim(-0.2, 1.2) 
     ax.set_yticks([])
     ax.set_ylabel("")
@@ -286,7 +308,7 @@ plt.savefig("figs/corrP.png")
 # 12. Correlations over Social Circle Variance 
 wavecondition="wave in [1,2]"
 corrs =df_p.query(wavecondition)[["id", "wave", "treatment_wave2_str"] +corr_cols].melt(id_vars=["id", "wave", "treatment_wave2_str"], value_name="issue weight (correlation)", var_name="question").replace(dict(zip(corr_cols, questions_sc)))
-stds = df_p.query(wavecondition)[["id", "wave", "treatment_wave2_str"] +stdSC_cols].melt(id_vars=["id", "wave", "treatment_wave2_str"], value_name="std social circle opinions", var_name="question").replace(dict(zip(stdSC_cols, questions_sc)))
+stds = df_p.query(wavecondition)[["id", "wave", "treatment_wave2_str"] +stdSC_cols].melt(id_vars=["id", "wave", "treatment_wave2_str"], value_name="std opinions in social circle", var_name="question").replace(dict(zip(stdSC_cols, questions_sc)))
 corrStd_df = corrs.set_index(["id", "wave","treatment_wave2_str", "question"]).join(stds.set_index(["id", "wave", "question", "treatment_wave2_str"])).reset_index()
 
 def p_to_stars(p):
@@ -297,7 +319,7 @@ def p_to_stars(p):
 
 g = sns.lmplot(
     corrStd_df,
-    x="std social circle opinions",
+    x="std opinions in social circle",
     y="issue weight (correlation)",
     hue="question",
     height=3.5,
@@ -313,10 +335,10 @@ palette = sns.color_palette(n_colors=len(questions_sc))
 slopes, stars_list = [], []
 for question in questions_sc:
     subset = corrStd_df[corrStd_df["question"] == question].dropna(
-        subset=["std social circle opinions", "issue weight (correlation)"]
+        subset=["std opinions in social circle", "issue weight (correlation)"]
     )
     slope, _, _, p, _ = stats.linregress(
-        subset["std social circle opinions"],
+        subset["std opinions in social circle"],
         subset["issue weight (correlation)"]
     )
     slopes.append(slope)

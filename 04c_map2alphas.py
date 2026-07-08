@@ -42,7 +42,7 @@ def plot_map(ax, x, q, pos_processed):
             [pos_processed[inds, 0]],
             [pos_processed[inds, 1]],
             c=[colors[i] for i in inds],
-            s=16,
+            s=18,
             cmap=cmap, #plt.get_cmap("viridis"),
             vmin=-100,
             vmax=100,
@@ -83,7 +83,7 @@ pos_processed = np.array(
 )
 
 for q, ax in zip( [""]+questions_sc, axs.flatten()[[0,1,2,3,5,6,7]]):
-    plot_map(ax, df.loc[(df.bilendi_id == id) & (df.wave==wave)], q, pos_processed, wave - 1)
+    plot_map(ax, df.loc[(df.bilendi_id == id) & (df.wave==wave)], q, pos_processed)
     ax.set_title(('SpAM' if q=="" else (labelMap[q] + "\n" fr"$\alpha_{k[0]}={alphas[f'{k}_{q}'].values[0]:.3f}$")))
 axs[1, 0].axis("off")
 fig.text(0.05, 0.4, f"id: {id};\nwave {wave}", fontsize=7, ha="left")
@@ -102,83 +102,68 @@ print(id, wave)
 plt.show()
 
 
-#%% 
-# df_p.loc[df_p[[f"corr_alpha_{q}" for q in questions_sc]].isna().any(axis=1)]#.query("wave==2")
-# %% [markdown]
-# ## Nice examples
-#
-# - id, wave = (330717073703941, 2)
-#
-
-# %% [markdown]
-#
-
 # %%
-q = questions_sc[4]
+for q in [""]+questions_sc:
 
-fig, ax = plt.subplots(1,1, figsize=(2,2))
-id, wave = (330717090224301, 2)
-k = "corrP_alpha"
-alpha_cols = [f"{k}_{q}" for q in questions_sc]
-alphas = df_p.query(f"id=={id} and wave=={wave}")[alpha_cols]
-if "exp" in k or "linear" in k: 
-    params = df_p.query(f"id=={id} and wave=={wave}")[[] if k=="corr" else [f"{k}_param{n}" for n in [1,2]]]
-pos = json.loads(df.loc[(df.wave==wave) & (df.bilendi_id == id), "player.positions"].iloc[0])
+    fig, ax = plt.subplots(1,1, figsize=(2,2))
+    id, wave = (330717090224301, 2)
+    k = "corrP_alpha"
+    alpha_cols = [f"{k}_{q}" for q in questions_sc]
+    alphas = df_p.query(f"id=={id} and wave=={wave}")[alpha_cols]
+    if "exp" in k or "linear" in k: 
+        params = df_p.query(f"id=={id} and wave=={wave}")[[] if k=="corr" else [f"{k}_param{n}" for n in [1,2]]]
+    pos = json.loads(df.loc[(df.wave==wave) & (df.bilendi_id == id), "player.positions"].iloc[0])
 
-pos_processed = {p["varname"].replace(" ", ""): np.array([p["x"], p["y"]]) for p in pos}
-pos_processed = np.array(
-    [
-        (
-            [np.nan, np.nan]
-            if k.replace(" ", "") not in pos_processed
-            else pos_processed[k]
-        )
-        for k in peeps
-    ]
-)
-scatter = plot_map(ax, df.loc[(df.bilendi_id == id) & (df.wave==wave)], q, pos_processed)
-ax.set_title(('\nspatial arrangement' if q=="" else (labelMap[q] + "\n" fr"$\alpha_{k[0]}={alphas[f'{k}_{q}'].values[0]:.3f}$")))
-ax.text(0.5, 0.01, f"id: {id}; wave: {wave}", fontsize=5, ha="center", transform=ax.transAxes)
-if q in questions_sc:
-    cbar = plt.colorbar(
-        scatter,
-        ax=ax,
-        shrink=0.8,      # scales the length of the colorbar
-        fraction=0.086,  # width of colorbar as fraction of ax
-        pad=0.04,        # spacing between ax and colorbar
-        aspect=20,       # length-to-width ratio (higher = thinner)
+    pos_processed = {p["varname"].replace(" ", ""): np.array([p["x"], p["y"]]) for p in pos}
+    pos_processed = np.array(
+        [
+            (
+                [np.nan, np.nan]
+                if k.replace(" ", "") not in pos_processed
+                else pos_processed[k]
+            )
+            for k in peeps
+        ]
     )
-    cbar.set_ticks([-100, 0, 100])
-    cbar.set_ticklabels(['-1', '0', '+1'])
-fig.tight_layout()
-plt.savefig(f"figs/maps/{id}-{wave}_{'orig' if q=="" else q}.png", dpi=300)
-# %%
-
-
-q = questions_sc[2]
-
-fig, ax = plt.subplots(1,1, figsize=(1,1))
-id, wave = (330717090224301, 2)
-k = "corrP_alpha"
-alpha_cols = [f"{k}_{q}" for q in questions_sc]
-alphas = df_p.query(f"id=={id} and wave=={wave}")[alpha_cols]
-if "exp" in k or "linear" in k: 
-    params = df_p.query(f"id=={id} and wave=={wave}")[[] if k=="corr" else [f"{k}_param{n}" for n in [1,2]]]
-pos = json.loads(df.loc[(df.wave==wave) & (df.bilendi_id == id), "player.positions"].iloc[0])
-
-pos_processed = {p["varname"].replace(" ", ""): np.array([p["x"], p["y"]]) for p in pos}
-pos_processed = np.array(
-    [
-        (
-            [np.nan, np.nan]
-            if k.replace(" ", "") not in pos_processed
-            else pos_processed[k]
+    scatter = plot_map(ax, df.loc[(df.bilendi_id == id) & (df.wave==wave)], q, pos_processed)
+    ax.set_title(('\nspatial arrangement' if q=="" else (labelMap[q] + "\n" fr"$\alpha_{k[0]}={alphas[f'{k}_{q}'].values[0]:.3f}$")))
+    ax.text(0.5, 0.01, f"id: {id}; wave: {wave}", fontsize=5, ha="center", transform=ax.transAxes)
+    if q in questions_sc:
+        cbar = plt.colorbar(
+            scatter,
+            ax=ax,
+            shrink=0.8,      # scales the length of the colorbar
+            fraction=0.086,  # width of colorbar as fraction of ax
+            pad=0.04,        # spacing between ax and colorbar
+            aspect=20,       # length-to-width ratio (higher = thinner)
         )
-        for k in peeps
-    ]
-)
-scatter = plot_map(ax, df.loc[(df.bilendi_id == id) & (df.wave==wave)], q, pos_processed)
-fig.tight_layout()
-plt.savefig(f"figs/maps/{id}-{wave}_{'orig' if q=="" else q}_focus.png", dpi=300)
+        cbar.set_ticks([-100, 0, 100])
+        cbar.set_ticklabels(['-1', '0', '+1'])
+    fig.tight_layout()
+    plt.savefig(f"figs/maps/{id}-{wave}_{'orig' if q=="" else q}.png", dpi=300)
+
+    fig, ax = plt.subplots(1,1, figsize=(1,1))
+    id, wave = (330717090224301, 2)
+    k = "corrP_alpha"
+    alpha_cols = [f"{k}_{q}" for q in questions_sc]
+    alphas = df_p.query(f"id=={id} and wave=={wave}")[alpha_cols]
+    if "exp" in k or "linear" in k: 
+        params = df_p.query(f"id=={id} and wave=={wave}")[[] if k=="corr" else [f"{k}_param{n}" for n in [1,2]]]
+    pos = json.loads(df.loc[(df.wave==wave) & (df.bilendi_id == id), "player.positions"].iloc[0])
+
+    pos_processed = {p["varname"].replace(" ", ""): np.array([p["x"], p["y"]]) for p in pos}
+    pos_processed = np.array(
+        [
+            (
+                [np.nan, np.nan]
+                if k.replace(" ", "") not in pos_processed
+                else pos_processed[k]
+            )
+            for k in peeps
+        ]
+    )
+    scatter = plot_map(ax, df.loc[(df.bilendi_id == id) & (df.wave==wave)], q, pos_processed)
+    fig.tight_layout()
+    plt.savefig(f"figs/maps/{id}-{wave}_{'orig' if q=="" else q}_focus.png", dpi=300)
 
 # %%

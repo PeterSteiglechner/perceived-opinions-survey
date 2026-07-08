@@ -228,8 +228,6 @@ def plot_resin(df_dummy, pos=None, ax=None, fig=None, n_likert = 3):
     G = make_graph_(df=df_dummy, list_of_nodes=df_dummy.columns, alpha=alpha, get_p=get_p,
                      remove_non_significant=remove_non_significant, remove_nan=remove_nan,
                      exclude_same_question=True)
-    print("Complete!")
-
     if pos is None:
         # No reference given -> compute a fresh layout for this graph (e.g. for wave 1, or your master layout)
         x_pca = do_PCA(G)

@@ -75,6 +75,14 @@ options(tibble.width = Inf)
 
 All hypotheses concerning a single slope parameter (e.g., H1 to H3) are tested using a t-test at significance level $\alpha = 0.05$. Hypotheses involving multiple parameters are tested using a single F-test on their joint significance, also at $\alpha = 0.05$. All subsequent hypotheses follow this convention without further repetition.
 
+\begin{minipage}{\textwidth}
+{\color{red}NOTE: I am using all dots to infer the issue weights here. For using just the parties, change the line below to ```fitPartyDots```}
+\end{minipage}
+
+```{r}
+fitmode = 'fitAllDots'
+```
+
 ```{r}
 #| label: helpers
 
@@ -136,11 +144,11 @@ print_fit_table <- function(...) {
 
 tidy_print <- function(m, mixed = FALSE) {
   tidy_fn <- if (mixed) broom.mixed::tidy else broom::tidy
-  tidy_fn(m, effects = "fixed") |>
+  tbl <- tidy_fn(m, effects = "fixed") |>
     select(term, estimate, std.error, p.value) |>
-    mutate(across(where(is.numeric), \(x) round(x, 3))) |>
-    print(m=Inf) |> 
-    knitr::kable()
+    mutate(across(where(is.numeric), \(x) round(x, 3))) 
+  print(tbl)  
+  knitr::kable(tbl)
 }
 
 sig_stars <- function(p) {
@@ -176,10 +184,6 @@ partiesCloseSel <- c("Left Party","BSW","Green Party","SPD","FDP","CDU/CSU","AfD
 
 # Shared column-name vectors (used across many hypotheses)
 col_deltas    <- paste0("deltaX_",       questions_sc)
-col_alpha_corrP <- paste0("corrP_alpha_",    questions_sc)
-col_alpha_corrS <- paste0("corrS_alpha_",    questions_sc)
-col_alpha_exp <- paste0("exp_alpha_",    questions_sc)
-col_alpha_lin <- paste0("linear_alpha_", questions_sc)
 col_weights   <- paste0("w_",            questions_sc)
 col_var_std   <- paste0("std_socialCircle_ops_", questions_sc)
 col_var_var   <- paste0("var_socialCircle_ops_", questions_sc)
@@ -191,7 +195,7 @@ col_var_var   <- paste0("var_socialCircle_ops_", questions_sc)
 #| label: load_data
 
 df_p <- read.csv(
-  "processed_data/2026-06-19_data_processed_participant_withAllIssueWeights_justParties.csv"
+  "processed_data/2026-07-07_data_processed_participant_withAllIssueWeights.csv"
 )
 
 inds_bothwaves <- df_p |>
@@ -212,10 +216,13 @@ df_p <- df_p |>
     across(all_of(col_var_std), function(x) x^2,
            .names = "var_{gsub('std_', '', col)}"),
     wave = factor(wave)
-  )
+  ) |> 
+    rename_with(~ str_replace(., "alpha_deltaX_", "alpha_"))|> 
+    rename_with(~ str_replace(., paste0("alpha_", fitmode,"_deltaX_"), paste0("alpha_", fitmode, "_")))
+
 
 df_diff <- read.csv(
-  "processed_data/2026-06-19_data_processed_differences_withAllIssueWeights_justParties.csv"
+  "processed_data/2026-07-07_data_processed_differences_withAllIssueWeights.csv"
 ) |>
   mutate(
     ingroupdummy = as.integer(ingroupdummy == "True"),
@@ -226,7 +233,10 @@ df_diff <- read.csv(
                    all_of(paste0("var_socialCircle_ops_",  questions_sc)),
                    all_of(paste0("std_socialCircle_ops_", questions_sc))),
     by = c("id", "wave")
-  )
+  ) |> 
+      rename_with(~ str_replace(., "alpha_deltaX_", "alpha_"))|> 
+      rename_with(~ str_replace(., paste0("alpha_", fitmode,"_deltaX_"), paste0("alpha_", fitmode, "_")))
+
 ```
 
 
@@ -388,8 +398,8 @@ The prediction is that $\overline{\Delta \alpha_q}_{\mathrm{within}} - \overline
 ```{r}
 #| label: H5
 
-k          <- "exp"
-alpha_cols <- paste0(k, "_alpha_", questions_sc)
+k          <- "exp_alpha" # alternative: linear or logistic
+alpha_cols <- paste0(k, "_", fitmode, "_", questions_sc)
 
 ctrl_ids_h5 <- df_p |>
   filter(id %in% inds_bothwaves, wave == 2, treatment_wave2 == "0") |>
@@ -536,7 +546,7 @@ run_H_per_issue <- function(k, predictor, label, use_lmer = TRUE, categorical = 
   purrr::walk(questions_sc, function(q) {
     df_q <- df_p |>
       filter(wave %in% c(1, 2)) |>
-      select(id, wave, all_of(predictor), alpha_q = all_of(paste0(k, "_", q))) |>
+      select(id, wave, all_of(predictor), alpha_q = all_of(paste0(k,  "_", q))) |>
       filter(!is.na(.data[[predictor]]), !is.na(alpha_q)) |>
       mutate(wave = factor(wave))
 
@@ -610,8 +620,8 @@ For exponential/linear weights (constrained):
 ```{r}
 #| label: H6
 # H6 - party
-run_H_joint    ("exp_alpha", "party_close", "H6", use_lmer = FALSE, categorical = TRUE)
-run_H_joint    ("corrP_alpha",  "party_close", "H6", use_lmer = TRUE,  categorical = TRUE)
+run_H_joint    (paste0("exp_alpha_", fitmode), "party_close", "H6", use_lmer = FALSE, categorical = TRUE)
+run_H_joint    (paste0("corrP_alpha_", fitmode),  "party_close", "H6", use_lmer = TRUE,  categorical = TRUE)
 ```
 
 
@@ -620,8 +630,8 @@ run_H_joint    ("corrP_alpha",  "party_close", "H6", use_lmer = TRUE,  categoric
 ```{r}
 #| label: H6-per-issue
 
-run_H_per_issue("exp_alpha",    "party_close", "H6", use_lmer = FALSE, categorical = TRUE)
-run_H_per_issue("corrP_alpha",  "party_close", "H6", use_lmer = TRUE,  categorical = TRUE)
+run_H_per_issue(paste0("exp_alpha_", fitmode),    "party_close", "H6", use_lmer = FALSE, categorical = TRUE)
+run_H_per_issue(paste0("corrP_alpha_", fitmode),  "party_close", "H6", use_lmer = TRUE,  categorical = TRUE)
 
 ```
 
@@ -648,8 +658,8 @@ Left and right participants differ in how strongly they weigh different politica
 #| label: H7
 
 # H7 - lr
-run_H_joint    ("exp_alpha", "lr", "H7", use_lmer = FALSE)
-run_H_joint    ("corrP_alpha",  "lr", "H7", use_lmer = TRUE)
+run_H_joint    (paste0("exp_alpha_", fitmode), "lr", "H7", use_lmer = FALSE)
+run_H_joint    (paste0("corrP_alpha_", fitmode),  "lr", "H7", use_lmer = TRUE)
 
 
 ```
@@ -657,8 +667,8 @@ run_H_joint    ("corrP_alpha",  "lr", "H7", use_lmer = TRUE)
 And again, per issue:
 ```{r}
 #| label: H7-per-issue
-run_H_per_issue("exp_alpha",    "lr", "H7", use_lmer = FALSE)
-run_H_per_issue("corrP_alpha",  "lr", "H7", use_lmer = TRUE)
+run_H_per_issue(paste0("exp_alpha_", fitmode),    "lr", "H7", use_lmer = FALSE)
+run_H_per_issue(paste0("corrP_alpha_", fitmode),  "lr", "H7", use_lmer = TRUE)
 
 ```
 
@@ -674,15 +684,15 @@ The prediction is $\beta_q\neq 0$. Older and younger participants differ in how 
 
 ```{r}
 #| label: H8
-run_H_joint    ("linear_alpha", "age", "H8", use_lmer = FALSE)
-run_H_joint    ("corrP_alpha",  "age", "H8", use_lmer = TRUE)
+run_H_joint    (paste0("exp_alpha_", fitmode), "age", "H8", use_lmer = FALSE)
+run_H_joint    (paste0("corrP_alpha_", fitmode),  "age", "H8", use_lmer = TRUE)
 ```
 
 And again, per issue:
 ```{r}
 #| label: H8-per-issue
-run_H_per_issue("exp_alpha",    "age", "H8", use_lmer = FALSE)
-run_H_per_issue("corrP_alpha",  "age", "H8", use_lmer = TRUE)
+run_H_per_issue(paste0("exp_alpha_", fitmode),    "age", "H8", use_lmer = FALSE)
+run_H_per_issue(paste0("corrP_alpha_", fitmode),  "age", "H8", use_lmer = TRUE)
 
 ```
 
@@ -691,17 +701,19 @@ run_H_per_issue("corrP_alpha",  "age", "H8", use_lmer = TRUE)
 
 ```{r}
 #| label: Aim2-exploration
-print(" exploration later ")
+print(" exploration: use all predictors for issue weight prediction")
 
-k = "exp_alpha"
+k = paste0("exp_alpha_", fitmode)
+
 use_lmer = FALSE
 label = "demographics"
 cat(sprintf("\n-- %s per issue (issue weight: %s) --", label, k))
 predictor = c("age", "lr", "party_close", "gender")
 models = purrr::map(questions_sc, function(q) {
+  alpha_col <- paste0(k, "_", q)
   df_q <- df_p |>
     filter(wave %in% c(1, 2)) |>
-    select(id, wave, all_of(predictor), alpha_q = all_of(paste0(k,"_", q))) |>
+    select(id, wave, all_of(predictor), alpha_q = all_of(alpha_col)) |>
     filter(gender %in% c("m", "f")) |> 
     filter(!is.na(age), !is.na(lr), !is.na(party_close), !is.na(alpha_q), !is.na(gender)) |>
     mutate(wave = factor(wave))|>
@@ -739,40 +751,40 @@ x <- models |> purrr::pluck(1) |> tidy_print()
 
 ```
 
-### Exploration 2: Can we at least predict the issue weights based on party, lr and age?
+### Exploration 2: Can we predict the participant-reported issue importance based on party, lr, and age any better?
 
 ```{r}
-#| label: H6-weights
+#| label: H6-reported-weights
 run_H_joint    ("w", "party_close", "H6 Weights", use_lmer = TRUE)
 ```
 
 And again, per issue:
 ```{r}
-#| label: H6-weights-per-issue
+#| label: H6-reported-weights-per-issue
 run_H_per_issue("w",  "party_close", "H6 Weights", use_lmer = TRUE)
 
 ```
 
 ```{r}
-#| label: H7-weights
+#| label: H7-reported-weights
 run_H_joint    ("w", "lr", "H7 Weights", use_lmer = TRUE)
 ```
 
 And again, per issue:
 ```{r}
-#| label: H7-weights-per-issue
+#| label: H7-reported-weights-per-issue
 run_H_per_issue("w",  "lr", "H7 Weights", use_lmer = TRUE)
 
 ```
 
 ```{r}
-#| label: H8-weights
+#| label: H8-reported-weights
 run_H_joint    ("w", "age", "H8 Weights", use_lmer = TRUE)
 ```
 
 And again, per issue:
 ```{r}
-#| label: H8-weights-per-issue
+#| label: H8-reported-weights-per-issue
 run_H_per_issue("w",  "age", "H8 Weights", use_lmer = TRUE)
 
 ```
@@ -808,17 +820,19 @@ The prediction is $\beta_q<0$. Issues are assigned higher weight when associated
 ```{r}
 #| label: H9
 
-run_h9 <- function(k = "exp", variance_type = "std") {
+run_h9 <- function(k = "exp_alpha_fitAllDots", variance_type = "std") {
   var_col <- paste0(variance_type, "_socialCircle_ops")
+  alpha_cols <- paste0(k, "_", questions_sc)
 
   df_h9 <- df_p |>
     filter(wave %in% c(1, 2)) |>
+    select(id, wave, all_of(paste0(var_col, "_", questions_sc)), all_of(alpha_cols)) |> 
     pivot_longer(
-      cols          = matches(paste0("^(", var_col, "|", k, "_alpha)_")),
+      cols          = matches(paste0("^(", var_col, "|", k ,")_")),
       names_to      = c(".value", "issue"),
-      names_pattern = paste0("^(", var_col, "|", k, "_alpha)_(.*)")
+      names_pattern = paste0("^(", var_col, "|", k, ")_(.*)")
     ) |>
-    rename(var_sc = all_of(var_col), alpha = all_of(paste0(k, "_alpha"))) |>
+    rename(var_sc = all_of(var_col), alpha = all_of(k)) |>
     filter(!is.na(alpha), !is.na(var_sc))
 
   m  <- lmer(alpha ~ var_sc + wave + (1 | issue), data = df_h9)
@@ -831,11 +845,12 @@ run_h9 <- function(k = "exp", variance_type = "std") {
   # Per-issue
   cat("Per-issue breakdown:\n")
   purrr::walk(questions_sc, function(q) {
+    alpha_col <- paste0(k, "_", q)
     df_q <- df_p |>
       filter(wave %in% c(1, 2)) |>
       select(id, wave,
              var_sc = all_of(paste0(var_col, "_", q)),
-             alpha  = all_of(paste0(k, "_alpha_", q))) |>
+             alpha  = all_of(alpha_col)) |>
       filter(!is.na(alpha), !is.na(var_sc))
     m_q  <- lmer(alpha ~ var_sc + wave + (1 | id), data = df_q)
     cf_q <- lmer_coef(m_q, "var_sc")
@@ -845,22 +860,25 @@ run_h9 <- function(k = "exp", variance_type = "std") {
   cat("\n")
 }
 
-run_h9("exp",   "var")
-run_h9("corrS", "std")
+run_h9(paste0("exp_alpha_",fitmode) ,   "var")
+run_h9(paste0("corrP_alpha_",fitmode), "std")
 ```
 
 ```{r}
 #| label: H9-plot
 
-k <- "corrP"; variance_type <- "std"
+k <- paste0("corrP_alpha_", fitmode)
+variance_type <- "std"
+alpha_cols <- paste0(k, "_", questions_sc)
+
 df_h9_plot <- df_p |>
   filter(wave %in% c(1, 2)) |>
   pivot_longer(
-    cols          = matches(paste0("^(std_socialCircle_ops|", k, "_alpha)_")),
+    cols          = matches(paste0("^(std_socialCircle_ops|", k, ")_")),
     names_to      = c(".value", "issue"),
-    names_pattern = paste0("^(std_socialCircle_ops|", k, "_alpha)_(.*)")
+    names_pattern = paste0("^(std_socialCircle_ops|", k, ")_(.*)")
   ) |>
-  rename(var_sc = all_of(paste0(variance_type, "_socialCircle_ops")), alpha = all_of(paste0(k, "_alpha"))) |>
+  rename(var_sc = all_of(paste0(variance_type, "_socialCircle_ops")), alpha = all_of(k)) |>
   filter(!is.na(alpha), !is.na(var_sc))
 
 ggplot(df_h9_plot, aes(x = var_sc, y = alpha)) +
@@ -1134,11 +1152,14 @@ with fit parameters $\hat b_n$, and $\hat c_n$.
 The prediction is that this model (with $\hat\alpha_{n,q} = w_{n,q}$) outperforms (i) an unweighted model with $\hat\alpha_{n,q}=1/6$ and (ii) a population weight model with $\hat\alpha_{n,q} = 1/n \cdot \sum_n w_{n,q}$. We use R2, AIC, and BIC as model quality indicators.
 
 
+#### Step 1: Make predictions
 ```{r}
 #| label: H13-setup
 
 linear_kernel <- function(x, a, b) a + b * x
 exp_kernel    <- function(x, a, b) 1 - exp(-a * (x ^ b))
+log_kernel    <- function(x, a, b) 1 / (1 + exp(-b * (x - a)))
+
 r2_vec        <- function(y, pm) {
   ss_tot <- sum((y - mean(y, na.rm = TRUE))^2, na.rm = TRUE)
   1 - colSums((pm - y)^2, na.rm = TRUE) / ss_tot
@@ -1148,13 +1169,20 @@ compute_aic_bic <- function(mse, k, n) {
   tibble(aic = n * log(rss / n) + 2 * k, bic = n * log(rss / n) + k * log(n))
 }
 
+col_alpha_corrP <- paste0("corrP_alpha_", fitmode, "_",    questions_sc)
+col_alpha_corrS <- paste0("corrS_alpha_", fitmode, "_",    questions_sc)
+col_alpha_exp <- paste0("exp_alpha_", fitmode, "_",    questions_sc)
+col_alpha_lin <- paste0("linear_alpha_", fitmode, "_", questions_sc)
+col_alpha_log <- paste0("logistic_alpha_", fitmode, "_", questions_sc)
+
 alphas_pop_lin <- df_p |> select(all_of(col_alpha_lin)) |> colMeans()
 alphas_pop_exp <- df_p |> select(all_of(col_alpha_exp)) |> colMeans()
+alphas_pop_log <- df_p |> select(all_of(col_alpha_log)) |> colMeans()
 
 df_h13_base <- df_diff |>
   filter(wave %in% c(1, 2)) |>
   left_join(df_p |> select(id, wave, all_of(col_weights),
-                            all_of(col_alpha_lin), all_of(col_alpha_exp), all_of(col_alpha_corrP)),
+                            all_of(col_alpha_lin), all_of(col_alpha_log), all_of(col_alpha_exp), all_of(col_alpha_corrP)),
             by = c("id", "wave"), suffix = c("", ".drop")) |>
   select(-ends_with(".drop"))
 
@@ -1162,6 +1190,7 @@ df_h13_base <- df_diff |>
 .a_uniform <- matrix(1 / length(questions_sc), nrow = nrow(df_h13_base), ncol = length(questions_sc))
 .a_pop_exp <- matrix(alphas_pop_exp, nrow = nrow(df_h13_base), ncol = length(questions_sc), byrow = TRUE)
 .a_pop_lin <- matrix(alphas_pop_lin, nrow = nrow(df_h13_base), ncol = length(questions_sc), byrow = TRUE)
+.a_pop_log <- matrix(alphas_pop_log, nrow = nrow(df_h13_base), ncol = length(questions_sc), byrow = TRUE)
 .a_corrP <- as.matrix(df_h13_base[, col_alpha_corrP])
 .a_corrP_rel <- {
   cP <- as.matrix(df_h13_base[, col_alpha_corrP])
@@ -1170,34 +1199,43 @@ df_h13_base <- df_diff |>
 }
 .a_fit_exp <- as.matrix(df_h13_base[, col_alpha_exp])
 .a_fit_lin <- as.matrix(df_h13_base[, col_alpha_lin])
+.a_fit_log <- as.matrix(df_h13_base[, col_alpha_log])
 .a_weights <- {
   w <- as.matrix(df_h13_base[, col_weights])
   w_sum <- rowSums(w, na.rm = TRUE)
   ifelse(w_sum == 0, 0, w / w_sum)
 }
 
-pred_cols <- c("predicted_d_weights", "predicted_d_population_exp",
-               "predicted_d_population_lin", "predicted_d_uniform_exp",
-               "predicted_d_uniform_lin", "predicted_d_fit_linear",
-               "predicted_d_fit_exp", "predicted_d_corrP", "predicted_d_corrPrel")
+pred_cols <- c("weights", "population_exp",
+               "population_linear", "population_logistic", "uniform_exp",
+               "uniform_linear", "fit_linear",
+               "fit_exp", "corrP", "corrPrel")
+p <- function(prefix, n) {
+  df_h13_base[[paste0(prefix, "_", fitmode, "_param", n)]]
+}
 
 df_h13 <- df_h13_base |>
   mutate(
-    predicted_d_uniform_exp    = exp_kernel(   rowSums(.d * .a_uniform), exp_param1,    exp_param2),
-    predicted_d_uniform_lin    = linear_kernel(rowSums(.d * .a_uniform), linear_param1, linear_param2),
-    predicted_d_population_exp = exp_kernel(   rowSums(.d * .a_pop_exp), exp_param1,    exp_param2),
-    predicted_d_population_lin = linear_kernel(rowSums(.d * .a_pop_lin), linear_param1, linear_param2),
-    predicted_d_fit_exp        = exp_kernel(   rowSums(.d * .a_fit_exp), exp_param1,    exp_param2),
-    predicted_d_fit_linear     = linear_kernel(rowSums(.d * .a_fit_lin), linear_param1, linear_param2),
-    predicted_d_weights        = exp_kernel(   rowSums(.d * .a_weights), exp_param1,    exp_param2),
-    predicted_d_corrP        = exp_kernel(   rowSums(.d * .a_corrP), exp_param1,    exp_param2),
-    predicted_d_corrPrel        = exp_kernel(   rowSums(.d * .a_corrP_rel), exp_param1,    exp_param2)
+    uniform_exp          = exp_kernel(rowSums(.d * .a_uniform),    p("exp", 1),      p("exp", 2)),
+    uniform_linear        = linear_kernel(rowSums(.d * .a_uniform),   p("linear", 1),    p("linear", 2)),
+    uniform_logistic      = log_kernel(rowSums(.d * .a_uniform),   p("logistic", 1),  p("logistic", 2)),
+    population_exp        = exp_kernel(rowSums(.d * .a_pop_exp),      p("exp", 1),      p("exp", 2)),
+    population_linear     = linear_kernel(rowSums(.d * .a_pop_lin),   p("linear", 1),    p("linear", 2)),
+    population_logistic   = log_kernel(rowSums(.d * .a_pop_log),   p("logistic", 1),  p("logistic", 2)),
+    fit_exp                = exp_kernel(rowSums(.d * .a_fit_exp),      p("exp", 1),      p("exp", 2)),
+    fit_linear              = linear_kernel(rowSums(.d * .a_fit_lin),   p("linear", 1),    p("linear", 2)),
+    fit_logistic            = log_kernel(rowSums(.d * .a_fit_log),   p("logistic", 1),  p("logistic", 2)),
+    weights                = exp_kernel(rowSums(.d * .a_weights),      p("exp", 1),      p("exp", 2)),
+    corrP                  = exp_kernel(rowSums(.d * .a_corrP),        p("exp", 1),      p("exp", 2)),
+    corrPrel               = exp_kernel(rowSums(.d * .a_corrP_rel),    p("exp", 1),      p("exp", 2))
   ) |>
   mutate(across(all_of(pred_cols),
                 ~ pixel_dist - .x,
-                .names = "err_{str_remove(.col, 'predicted_d_')}"))
+                .names = "err_{.col}"))
 
 ```
+
+#### Step 2: Evaluate predictions
 ```{r}
 #| label: H13-comparison
 
@@ -1213,10 +1251,12 @@ k_lookup <- tribble(
   "weights",         0,
   "population_exp",  n_q,
   "population_lin",  n_q,
+  "population_logistic",  n_q,
   "uniform_exp",     0,
   "uniform_lin",     0,
   "fit_exp",         (n_q) * n_pw,   
   "fit_linear",      (n_q) * n_pw,
+  "fit_logistic",      (n_q) * n_pw,
   "corrP",            0,
   "corrPrel",         0
 )
@@ -1253,11 +1293,11 @@ print(comparison_tbl)
 
 ```
 
-#### Analysis 
+#### Step 3: Analysis of predictions 
 ```{r}
 #| label: H13-plots
 
-err_cols <- str_replace(pred_cols, "predicted_d_", "err_")
+err_cols <- paste0("err_", pred_cols)
 
 # Per-participant R^2
 per_person_r2 <- df_h13 |>
@@ -1465,7 +1505,7 @@ The prediction is $\beta_1 <0$. Higher relative social circle variance on one is
 #| label: H15
 
 variance_type <- "std"
-k             <- "exp"
+k             <- paste0("corrP_alpha_", fitmode)
 var_col       <- paste0(variance_type, "_socialCircle_ops")
 
 # Variance change per participant per issue
@@ -1488,11 +1528,11 @@ df_h15_var <- df_p |>
 
 # Alpha weights across waves
 df_h15_alpha <- df_p |>
-  pivot_longer(cols = matches(paste0("^", k, "_alpha_")),
+  pivot_longer(cols = matches(paste0("^", k)),
                names_to  = c(".value", "issue"),
-               names_pattern = paste0("^(", k, "_alpha)_(.*)")) |>
+               names_pattern = paste0("^(", k, ")_(.*)")) |>
   pivot_wider(id_cols = c(id, issue), names_from = wave,
-              names_prefix = "alpha_w", values_from = all_of(paste0(k, "_alpha")))
+              names_prefix = "alpha_w", values_from = all_of(k))
 
 df_h15 <- df_h15_var |>
   left_join(df_h15_alpha, by = c("id", "issue")) |>

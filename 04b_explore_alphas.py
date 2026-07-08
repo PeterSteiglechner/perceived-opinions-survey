@@ -59,7 +59,7 @@ for k_func in ["exp", "linear"]:
 df_p["best_kernel"].value_counts()
 
 #%%
-k="corrS"
+k="corrP"
 # --------- WAVE 1 vs 2 --------------
 alpha_cols = [f"{k}_alpha_{q}" for q in questions_sc]
 fig, ax = plt.subplots(1,1, figsize=(18/2.54, 9/2.54))
@@ -113,29 +113,90 @@ ax.set_xlim(-0.5,len(questions_sc)-0.5)
 
 #%%
 # --------- By LR --------------
+k = "corrP"
+strip = False
+kname = "correlation"
 cmapLR = {'left':'#d8b365', 'moderate':"#A1A1A1", 'right':'#5ab4ac'}
 alpha_cols = [f"{k}_alpha_{q}" for q in questions_sc]
 fig, ax = plt.subplots(1,1, figsize=(18/2.54, 9/2.54))
-waves = [1,2]
+waves = [1]
 df_p["lr_label"]= pd.cut(df_p.lr, bins=LRcuts, labels=cmapLR.keys())
 aa = df_p.loc[df_p.wave.isin(waves), alpha_cols+["lr_label"]].melt(id_vars="lr_label", ).reset_index().replace(dict(zip(alpha_cols, questions_sc)))
 aa["value"] = aa["value"]
-sns.barplot(aa, x="variable", y="value", hue="lr_label", hue_order=cmapLR.keys(), palette=cmapLR, err_kws={'linewidth': 0.6}, alpha=0.8, estimator='mean', errorbar=('ci', 95),)
-# sns.stripplot(aa, x="variable", y="value", hue="party_close", hue_order=ppp, palette=party_cmap, alpha=0.8, size=2, dodge=True, legend=False)
+if strip: 
+    sns.stripplot(aa, x="variable", y="value", hue="lr_label", hue_order=cmapLR.keys(), palette=cmapLR, alpha=0.8, size=1, dodge=True, legend=False, jitter=1/len(aa["lr_label"].unique()))
+sns.barplot(aa, x="variable", y="value", hue="lr_label", hue_order=cmapLR.keys(), palette=cmapLR, err_kws={'linewidth': 0.6}, alpha=0.8, estimator='mean', errorbar=('ci', 95), fill=False if strip else True)
 ax.set_xticklabels([labelMap_nl[l.get_text()] for l in ax.get_xticklabels()])
 fig.autofmt_xdate(rotation=20, ha="center")
 ax.set_xlabel("")
-ax.hlines(1/6, -0.5, len(questions_sc)-0.5, linestyles="--", colors="grey")
-ax.set_ylabel(f"issue weight \n({k} kernel, {f'wave {waves[0]}' if len(waves)==1 else 'both waves'})")
+# ax.hlines(1/6, -0.5, len(questions_sc)-0.5, linestyles="--", colors="grey")
+ax.hlines(0, -0.5, len(questions_sc)-0.5, linestyles="-", colors="k")
+ax.grid(axis="y")
+ax.set_ylabel(f"issue weight via {kname}, {f'wave {waves[0]}' if len(waves)==1 else 'both waves'}")
 handles, labels = ax.get_legend_handles_labels()
 c = df_p.loc[df_p.wave.isin(waves), ["lr_label"]].value_counts()
 labels = [f'{l} ($n={c[l]}$)' for l in labels]
 ax.legend(handles, labels, ncols=3, handlelength=2, columnspacing=0.5,  frameon=False)
-ax.set_ylim(0,0.32 if not "corr" in k else 0.5)
+ax.set_ylim(-0.3,0.32 if not "corr" in k else 1)
 ax.set_xlim(-0.5,len(questions_sc)-0.5)
-plt.savefig("issue_weights_by_lr.png", dpi=600)
+plt.savefig(f"figs/issue_weights_by_lr_{'strip' if strip else ''}.png", dpi=600)
 # %%
+# pip install statannotations
+import itertools
+from statannotations.Annotator import Annotator
 
+k = "corrP"
+strip = False
+kname = "correlation"
+cmapLR = {'left':'#d8b365', 'moderate':"#A1A1A1", 'right':'#5ab4ac'}
+alpha_cols = [f"{k}_alpha_{q}" for q in questions_sc]
+fig, ax = plt.subplots(1,1, figsize=(18/2.54, 9/2.54))
+waves = [1]
+df_p["lr_label"] = pd.cut(df_p.lr, bins=LRcuts, labels=cmapLR.keys())
+aa = df_p.loc[df_p.wave.isin(waves), alpha_cols+["lr_label"]].melt(id_vars="lr_label").reset_index().replace(dict(zip(alpha_cols, questions_sc)))
+aa["value"] = aa["value"]
+
+if strip:
+    sns.stripplot(aa, x="variable", y="value", hue="lr_label", hue_order=cmapLR.keys(), palette=cmapLR, alpha=0.8, size=1, dodge=True, legend=False, jitter=1/len(aa["lr_label"].unique()))
+sns.barplot(aa, x="variable", y="value", hue="lr_label", hue_order=cmapLR.keys(), palette=cmapLR, err_kws={'linewidth': 0.6}, alpha=0.8, estimator='mean', errorbar=('ci', 95), fill=False if strip else True)
+
+# --- significance annotations ---
+pairs = [
+    ((q, g1), (q, g2))
+    for q in questions_sc
+    for g1, g2 in itertools.combinations(cmapLR.keys(), 2)
+]
+if not strip:
+    annotator = Annotator(ax, pairs, data=aa, x="variable", y="value", hue="lr_label", hue_order=cmapLR.keys())
+    annotator.configure(
+        test='Mann-Whitney',
+        text_format='star',
+        loc='inside',
+        comparisons_correction="BH",
+        line_offset=0.3,          # gap between the bars/data max and the first bracket
+        line_offset_to_group=3, # extra gap between bracket lines when stacked
+        line_height=0.1,          # height of the little vertical ticks at bracket ends
+        text_offset=0.2,             # gap between bracket and the star/text label
+        verbose=0,
+        use_fixed_offset=True,
+    )
+    annotator.apply_and_annotate()
+    # --- end annotations ---
+
+ax.set_xticklabels([labelMap_nl[l.get_text()] for l in ax.get_xticklabels()])
+fig.autofmt_xdate(rotation=20, ha="center")
+ax.set_xlabel("")
+ax.hlines(0, -0.5, len(questions_sc)-0.5, linestyles="-", colors="k")
+ax.grid(axis="y")
+ax.set_ylabel(f"issue weight via {kname}, {f'wave {waves[0]}' if len(waves)==1 else 'both waves'}")
+handles, labels = ax.get_legend_handles_labels()
+c = df_p.loc[df_p.wave.isin(waves), ["lr_label"]].value_counts()
+labels = [f'{l} ($n={c[l]}$)' for l in labels]
+ax.legend(handles, labels, ncols=3, handlelength=2, columnspacing=0.5, frameon=False)
+ax.set_ylim(-0.3, 0.32 if not "corr" in k else 1.2)
+ax.set_xlim(-0.5, len(questions_sc)-0.5)
+plt.savefig(f"figs/issue_weights_by_lr_{'strip' if strip else ''}.png", dpi=600)
+#%%
 
 # %%
 sns.histplot(df_p, x= f"{k}_alpha_climate_concern", y = f"{k}_alpha_rights_indep_integration")
