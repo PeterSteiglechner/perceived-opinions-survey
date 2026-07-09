@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 from consts import *
 import numpy as np
 from itertools import combinations
-from scipy.stats import linregress
 from scipy.stats import spearmanr
 from scipy.stats import pearsonr
 import json
@@ -718,6 +717,15 @@ for var in vars:
     fig.tight_layout()
 
 display(df_p[vars].describe())
+
+# %%
+#%%
+
+# Pairplot of opinion differences and map distances
+
+diff_cols = [f'deltaX_{q}' for q in questions_sc] + ['pixel_dist']
+sns.pairplot(df_diff.sample(500)[diff_cols], plot_kws={'size':0.1}, )
+
 
 # %% [markdown]
 # # Social Closeness

@@ -172,6 +172,8 @@ for q in [""] + questions_sc:
 
 # %%
 
+#%%
+
 linear=lambda d, a, b:  a + b* d
 s=lambda d, a, b:  1 -np.exp(-a * d**b)
 log=lambda d, a, b: 1 / (1 + np.exp(-b * (d-a)))

@@ -4,9 +4,6 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from consts import *
 import numpy as np
-from itertools import combinations
-from scipy.stats import linregress
-from scipy.stats import spearmanr
 from scipy.stats import pearsonr
 import json
 bigfs = 11

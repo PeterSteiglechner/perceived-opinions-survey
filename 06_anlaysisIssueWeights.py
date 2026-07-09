@@ -6,7 +6,7 @@ from consts import *
 import numpy as np
 import scipy.stats as ss
 from itertools import combinations
-from statannotations.Annotator import Annotator
+# from statannotations.Annotator import Annotator
 from scipy.stats import linregress
 
 plt.rcParams.update({"font.size":9})
@@ -447,6 +447,9 @@ plt.figure(figsize=(5,3))
 sns.boxplot(df_p.loc[df_p.wave.isin(waves)], y="party_close", x="maxAlpha", hue="party_close", palette=party_cmap, fliersize=0, hue_order=parties_full)
 #sns.histplot(df_p, x="maxAlpha", hue="party_close", palette=party_cmap, kde=True, bins=np.linspace(0,1), stat="proportion", common_norm=False, kde_kws={"cut":0})
 
+
+# %% [markdown]
+# 
 
 # %%
 
