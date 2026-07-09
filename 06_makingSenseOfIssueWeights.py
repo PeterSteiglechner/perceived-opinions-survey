@@ -192,3 +192,8 @@ for k_func in ["exp", "linear", "log"]:
         axs["curve"].plot(xx, func(xx, params[0], params[1]), lw=0.5, alpha=0.4)
         axs["curve"].set_ylim(0,1)
         axs["curve"].set_xlim(0,1)
+
+
+#%%
+
+

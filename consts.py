@@ -119,3 +119,4 @@ cmapTreatment = {False: "#386cb0", True: "#f0027f"}
 cmapTreatment[0] = cmapTreatment[False]
 cmapTreatment[1] = cmapTreatment[True]
 cmapTreatment["w1"] = "grey"
+cmapLR = {'left':'#d8b365', 'moderate':"#A1A1A1", 'right':'#5ab4ac'}
